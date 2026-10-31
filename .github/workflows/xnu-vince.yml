@@ -121,6 +121,7 @@ jobs:
               b'VinceGPU: pool leases takes=',
               b'VinceGPU: pool v4: reclaim leases after descriptor teardown',
               b'VinceGPU: pool reclaimed pages=',
+              b'SWEET FB: IOMFBDisplayRefresh: ', b'fb_ca_hz',
           ):
               if marker not in data:
                   raise SystemExit(f'{kernel}: missing daisy fix marker {marker!r}')

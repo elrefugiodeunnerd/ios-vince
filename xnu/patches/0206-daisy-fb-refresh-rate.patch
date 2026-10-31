@@ -1,0 +1,58 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 8f36ac2..309288a 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -42,6 +42,7 @@ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOUserClient.h>
+ #include <IOKit/IOKitKeys.h>
++#include <libkern/c++/OSNumber.h>
+ #include <IOKit/IOLib.h>
+ #include <IOKit/IOLocks.h>
+ #include <IOKit/IOWorkLoop.h>
+@@ -276,6 +277,45 @@ AppleCLCD::start(IOService *provider)
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+ 	setProperty("external", false);
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
++	/*
++	 * The refresh the window server clocks its frames by: the IOMFBDisplayRefresh property, a dictionary of the
++	 * shortest interval between refreshes, the longest, and the step between them (QuartzCore,
++	 * windowserver-apple-display.cpp: displayMinRefreshInterval, displayRefreshStepMachTime; CoreMedia's FPSupport:
++	 * displayMaxRefreshInterval, displayRefreshStep). Without it CoreAnimation takes a built-in panel for a 60 Hz
++	 * one whatever its timing says. The intervals are in units of 2^-32 of a second (32.32 fixed point), not mach
++	 * absolute ticks: given 1/120 s in the reference phone's ticks (160000 of 19.2 MHz) CoreAnimation answered a
++	 * refresh rate of 26844 a second, which is 2^32 / 160000. Only the step whose name says MachTime is in ticks.
++	 * Ported from hakios-xnu-kernel b6c1f82/0dedaec/f6ebf31. This panel does not vary its rate, so all of them are
++	 * the one interval: fb_hz's (60 unless the boot-arg says otherwise), or fb_ca_hz when CoreAnimation is to be
++	 * told a rate apart from the panel's. sweetfb_hz stays the flush divider and keeps its meaning.
++	 */
++	{
++		uint32_t refreshHz = 60, caHz = 0;
++		PE_parse_boot_argn("fb_hz", &refreshHz, sizeof(refreshHz));
++		if (refreshHz == 0 || refreshHz > 1000) { refreshHz = 60; }
++		PE_parse_boot_argn("fb_ca_hz", &caHz, sizeof(caHz));
++		if (caHz == 0 || caHz > 1000) { caHz = refreshHz; }
++		OSDictionary *refresh = OSDictionary::withCapacity(4);
++		if (refresh != NULL) {
++			uint64_t interval = (1ULL << 32) / caHz, ticks;
++			nanoseconds_to_absolutetime(NSEC_PER_SEC / caHz, &ticks);
++			for (unsigned i = 0; i < 4; i++) {
++				const char *key = i == 0 ? "displayMinRefreshInterval" :
++				    i == 1 ? "displayMaxRefreshInterval" :
++				    i == 2 ? "displayRefreshStep" : "displayRefreshStepMachTime";
++				uint64_t value = i == 3 ? ticks : interval;
++				OSNumber *n = OSNumber::withNumber(value, 64);
++				if (n != NULL) {
++					refresh->setObject(key, n);
++					n->release();
++				}
++			}
++			setProperty("IOMFBDisplayRefresh", refresh);
++			refresh->release();
++			IOLog("SWEET FB: IOMFBDisplayRefresh: %u Hz, an interval of %llu (2^-32 s), %llu ticks\n",
++			    caHz, interval, ticks);
++		}
++	}
+ 	registerService();
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u, panel %u bpp\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH, fPanelBpp * 8);
