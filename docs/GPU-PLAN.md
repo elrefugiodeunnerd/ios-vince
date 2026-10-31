@@ -1086,3 +1086,70 @@ successfully transferred and started the image. Await the user's swipe
 test and recovered console before claiming iOS startup or stability.
 Check full `reserved=512 MiB chunks=15`, pool v3, memory-test PASS, touch,
 and any pool misses/lease counters preceding rendering errors.
+### 0204 direct-target hardware result
+
+The user reports the clock area is still half broken with missing shadows,
+the blur is still broken, and rendering is still slow. The recovered console
+(`artifacts/console-gpu-direct-0204.log`, 423,093 bytes, SHA-256
+`6038671d0e9fe9986d4377cb5125c313d35293f1e74018e1cb4bf18885fd23d3`)
+confirms the full startup: CX TURBO ACK, `configured 650 MHz`, pool v2/v3,
+the full 512 MiB reserve, memory-test PASS, eight `import surface=` results,
+and completed submit fences. No signal crash appears in the capture.
+
+The direct-target path removed the attachment cost as intended (frame 220:
+0 us before it for the IOSurfaces), but the copy-out remains the dominant
+cost: frame 220 155,413 us, frame 240 163,617 us and frame 260 151,007 us
+copying out of 46 frame summaries.
+
+The pool then exhausted with the lease counters exposing the defect:
+
+```text
+VinceGPU: GEM pool exhausted request=11227136 used=502320 KiB peak=502320 KiB largest=3972 KiB
+VinceGPU: pool leases takes=539 returns=0 live=539 reserved=524288 KiB
+```
+
+Eight exhaustion messages follow, with 20 `glTexImage2D: error 0x505`
+(GL_OUT_OF_MEMORY) and 40 `glDrawElements`/`glFlush: error 0x506`
+(incomplete framebuffer) afterwards; only two <=1 MiB buffers escaped
+through the 0202 ordinary-allocator fallback. `returns=0` across 539 takes
+means no lease was ever reclaimed.
+
+A host reproduction (`artifacts/daisy-0204-pool-lifetime-repro.log`,
+4,955 bytes, SHA-256
+`6eab233a1b065d3b0c59b48f7d3a8bb4f310a8ec70911b0a4f999bbb65df6e3d`) catches
+the cause as an AddressSanitizer heap-use-after-free:
+`VinceGPUPoolMemory::free()` reads its lease members after
+`IOGeneralMemoryDescriptor::free()`, whose `OSObject::free()` deletes the
+object. On hardware the same read can observe freed memory, so the
+`pages != 0` guard silently skips the reclaim and the span is never returned
+to the reserve.
+
+A mirror-defaults image for the next boot was also packaged
+(`artifacts/daisy-gpu-mirror-0204/daisy-boot.img`, 17,979,392 bytes,
+SHA-256 `c03ce4521df3a80202b496e76e4bf21571c302beedbc1cf18c7e5b9b99e54050`,
+the same verified 0204 kernel without `glblit=0`); it has not been booted.
+
+### 0205 pool reclaim
+
+`0205-daisy-gpu-pool-reclaim.patch` fixes the lease lifetime:
+`VinceGPUPoolMemory::free()` saves `chunk`/`first`/`pages` before the base
+call, marks the span free only after the prepared VM entry has been torn
+down, and reports the first four reclaims as
+`VinceGPU: pool reclaimed pages=`. The startup marker becomes
+`VinceGPU: pool v4: reclaim leases after descriptor teardown`. Live mappings
+still retain the lease through GEM_CLOSE; a span whose free never runs stays
+reserved, as before.
+
+The host harness now models the real `OSObject` contract — `release()`
+destroys the object and `free()` deletes `this` — so this class of bug fails
+the ASan test instead of hardware. A new `checkLeaseDuringTeardown` asserts
+the complete span stays reserved while the descriptor teardown runs, so a
+concurrent allocator cannot reuse it sooner.
+`python3 tools/tests/test_daisy_gpu_pool.py` passes both 4 KiB and 16 KiB
+runtime pages, including 111 zero-filled reuses, disjoint leases and mapping
+lifetime; `test_daisy_surface.py`, `test_daisy_touch_rpm.py` and
+`test_daisy_gpu_clock.py` pass unchanged. The workflow linked-kernel check
+now requires the v4 marker and a reclaim log. Hardware validation needs the
+next VINCE CI build and a phone boot: `returns` should advance with client
+teardown, but the exhaustion point only moves past the 539-take ceiling if
+userland actually releases its buffers.
