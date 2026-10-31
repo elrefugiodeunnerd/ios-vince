@@ -12,13 +12,25 @@ static IOMemoryDescriptor *allocate(uint64_t size, uint8_t **bytes = nullptr) {
 
 static void cleanup() {
     assert(gPoolUsed == 0);
+    assert(gPoolTakes == gPoolReturns);
     assert(preparations == completions);
     for (unsigned i = 0; i < gPoolCount; ++i) {
         for (auto bits : gPool[i].used) assert(bits == 0);
         gPool[i].memory->release(); gPool[i] = {};
     }
     delete gPoolLock; gPoolLock = nullptr;
-    gPoolCount = gPoolPeak = gPoolMisses = 0;
+    gPoolCount = gPoolPeak = gPoolMisses = gPoolFallbacks = 0;
+    gPoolReserved = gPoolTakes = gPoolReturns = 0;
+    assert(allocations.empty());
+    nextPA = 0xa4000000;
+}
+
+static IOMemoryDescriptor *surface(uint32_t size) {
+    uintptr_t address = 0xdeadbeef;
+    auto md = vince_surface_allocate(size, &address);
+    if (md) assert(address != 0xdeadbeef && address != 0);
+    else assert(address == 0xdeadbeef);
+    return md;
 }
 
 static void exercise() {
@@ -27,12 +39,19 @@ static void exercise() {
     // Without the boot argument, use the original allocator.
     gpuPoolInit(); assert(gPoolCount == 0 && !gPoolLock);
     auto ordinary = allocate(PAGE_SIZE); assert(ordinary); ordinary->release();
-    poolMB = 64; gpuPoolInit(); assert(gPoolCount == 2);
-    unsigned calls = physicalCalls;
+    ordinary = surface(PAGE_SIZE); assert(ordinary); ordinary->release();
+    auto calls = physicalCalls;
+    gpuSurfaceDMA = 0; assert(!surface(PAGE_SIZE)); gpuSurfaceDMA = 1;
+    gGPUSurfaces = false; assert(!surface(PAGE_SIZE)); gGPUSurfaces = true;
+    assert(!surface(0) && !surface(17) && !allocate(0) && !allocate(17));
+    assert(physicalCalls == calls);
+    poolMB = 72; gpuPoolInit(); assert(gPoolCount == 2);
+    calls = physicalCalls;
     constexpr uint64_t target = 12u << 20;
     auto a = allocate(target), b = allocate(target), c = allocate(target), d = allocate(target);
-    assert(a && b && c && d);
-    assert(allocate(target) == nullptr); // free 16 MiB, but no 12 MiB span
+    auto e = surface(target), f = surface(target);
+    assert(a && b && c && d && e && f);
+    assert(allocate(target) == nullptr && surface(target) == nullptr);
     assert(physicalCalls == calls); // exhaustion must not enter global VM scanning
     b->release(); d->release();
 
@@ -44,12 +63,21 @@ static void exercise() {
         memset(bytes, 0xa5, target);
         targetMemory->release();
     }
-    a->release(); c->release(); assert(gPoolUsed == 0 && physicalCalls == calls);
+    a->release(); c->release(); e->release(); f->release();
+    assert(gPoolUsed == 0 && physicalCalls == calls);
 
     // GEM_CLOSE releases the handle, but a live user mapping still owns the range.
     a = allocate(GPU_POOL_CHUNK); b = allocate(GPU_POOL_CHUNK); assert(a && b);
     auto map = a->map(); uint64_t oldPA = a->pa;
-    a->release(); assert(gPoolUsed == 2 * GPU_POOL_PAGES && !allocate(PAGE_SIZE));
+    a->release(); assert(gPoolUsed == 2 * GPU_POOL_PAGES && !allocate(2u << 20));
+    // Only requests <=1 MiB may use the ordinary allocator. Surface requests
+    // must not retry the same failed call or perform a large contiguous scan.
+    assert(!surface((1u << 20) + PAGE_SIZE) && physicalCalls == calls);
+    ordinary = surface(1u << 20); assert(ordinary && physicalCalls == calls + 1);
+    ordinary->release();
+    failPhysicalAt = physicalCalls + 1;
+    assert(!surface(PAGE_SIZE) && physicalCalls == calls + 2);
+    failPhysicalAt = 0; calls = physicalCalls;
     map->release(); assert(gPoolUsed == GPU_POOL_PAGES);
     a = allocate(GPU_POOL_CHUNK); assert(a && a->pa == oldPA);
     a->release(); b->release();
@@ -59,7 +87,13 @@ static void exercise() {
     failSpan = true; assert(!allocate(target) && gPoolUsed == 0); failSpan = false;
     assert(preparations == completions);
     std::vector<IOMemoryDescriptor *> pieces;
-    for (unsigned i = 0; i < 128; ++i) { a = allocate(512u << 10); assert(a); pieces.push_back(a); }
+    for (unsigned i = 0; i < 144; ++i) { a = allocate(512u << 10); assert(a); pieces.push_back(a); }
+    // Check disjoint physical leases, then free in alternating order to
+    // exercise bitmap coalescing across many independent descriptors.
+    for (unsigned i = 0; i < pieces.size(); ++i)
+        for (unsigned j = i + 1; j < pieces.size(); ++j)
+            assert(pieces[i]->pa + pieces[i]->size <= pieces[j]->pa ||
+                   pieces[j]->pa + pieces[j]->size <= pieces[i]->pa);
     for (unsigned parity = 0; parity < 2; ++parity)
         for (unsigned i = parity; i < pieces.size(); i += 2) pieces[i]->release();
     assert(gPoolUsed == 0);
@@ -72,8 +106,55 @@ static void exercise() {
     // A partial early reserve is still usable and does not retry failed chunks later.
     poolMB = 96; failPhysicalAt = physicalCalls + 2; gpuPoolInit(); assert(gPoolCount == 1);
     calls = physicalCalls;
+    gpuPoolInit(); assert(physicalCalls == calls);
+    assert(gPoolReserved == GPU_POOL_PAGES);
     a = allocate(target); assert(a && physicalCalls == calls); a->release(); cleanup();
-    printf("PASS (%u-byte runtime pages): GEM pool DMA32/WC, 111 target reuses, fragmentation, zero-fill, mapping lifetime, failure cleanup\n", PAGE_SIZE);
+
+    // An explicitly requested reserve that fails completely must also avoid
+    // large per-frame VM retries. Small fallback remains available.
+    failPhysicalAt = physicalCalls + 1; gpuPoolInit(); assert(!gPoolCount && gPoolLock);
+    calls = physicalCalls;
+    assert(!allocate(target) && !surface(target) && physicalCalls == calls);
+    a = surface(PAGE_SIZE); assert(a && physicalCalls == calls + 1); a->release(); cleanup();
+
+    // Exact small/partial budgets, including a final chunk that is not 36 MiB.
+    failPhysicalAt = 0;
+    for (auto mb : {1, 35, 37, 64}) {
+        poolMB = mb; gpuPoolInit();
+        assert((uint64_t)gPoolReserved * PAGE_SIZE == (uint64_t)mb << 20);
+        std::vector<IOMemoryDescriptor *> chunks;
+        for (unsigned i = 0; i < gPoolCount; ++i) {
+            a = allocate((uint64_t)gPool[i].pages * PAGE_SIZE); assert(a); chunks.push_back(a);
+        }
+        calls = physicalCalls;
+        assert(!surface(2u << 20) && physicalCalls == calls);
+        for (auto md : chunks) md->release();
+        cleanup();
+    }
+
+    // The actual failed surface size (rounded to runtime pages) and Mesa's
+    // 12 MiB replacement each fit 42 times within 512 MiB, versus 32 before.
+    // A request above the cap must still reserve only 512 MiB.
+    for (auto request : {11227136u, 12u << 20}) {
+        poolMB = 1024; gpuPoolInit();
+        assert(gPoolCount == 15 && (uint64_t)gPoolReserved * PAGE_SIZE == (512u << 20));
+        assert(gPool[14].pages * PAGE_SIZE == (8u << 20));
+        calls = physicalCalls;
+        uint32_t size = (request + PAGE_MASK) & ~PAGE_MASK;
+        pieces.clear();
+        for (unsigned i = 0; i < 42; ++i) {
+            a = i % 2 ? allocate(size) : surface(size); assert(a); pieces.push_back(a);
+        }
+        assert(!surface(size) && !allocate(size) && physicalCalls == calls);
+        // Map lifetimes keep ranges leased, even at full-size surface pressure.
+        auto held = pieces[0]->map();
+        pieces[0]->release(); assert(!surface(size));
+        held->release();
+        pieces[0] = surface(size); assert(pieces[0]);
+        for (auto md : pieces) md->release();
+        assert(physicalCalls == calls); cleanup();
+    }
+    printf("PASS (%u-byte runtime pages): 42 large targets in 512 MiB, exact budgets, bounded GEM/surface fallback, failed reserve, 111 zero-filled reuses, disjoint leases and mapping lifetime\n", PAGE_SIZE);
 }
 
 int main() {

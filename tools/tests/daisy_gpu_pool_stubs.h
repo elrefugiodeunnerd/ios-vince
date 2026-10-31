@@ -36,8 +36,12 @@ static IOLock *IOLockAlloc() { return new IOLock; }
 static void IOLockLock(IOLock *p) { p->lock(); }
 static void IOLockUnlock(IOLock *p) { p->unlock(); }
 static int poolMB;
+static int gpuSurfaceDMA = -1;
+static bool gGPUSurfaces = true;
 static void PE_parse_boot_argn(const char *key, void *out, size_t n) {
-    assert(strcmp(key, "daisygpu_pool") == 0 && n == sizeof(poolMB)); memcpy(out, &poolMB, n);
+    assert(n == sizeof(int));
+    if (strcmp(key, "daisygpu_pool") == 0) memcpy(out, &poolMB, n);
+    else { assert(strcmp(key, "daisysurface_dma") == 0); *(int *)out = 1; }
 }
 static void gpuToMemory(void *, uint64_t) {}
 struct IOAddressRange { uint64_t address, length; };

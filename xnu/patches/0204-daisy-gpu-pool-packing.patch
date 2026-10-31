@@ -1,0 +1,129 @@
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+index 1af5818..3ce6501 100755
+--- a/iokit/Kernel/arm/VinceGPU.cpp
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -237,13 +237,18 @@ gpuAllocate(uint64_t size, uint8_t **kernel, uint64_t *address)
+  * frame. Keep page-aligned GEM spans in early contiguous WC chunks instead
+  * of repeatedly asking vm_page_find_contiguous for 12 MiB. GEM and owned
+  * GPU surfaces share the reserve; cached surfaces retain their copy path. */
+-#define GPU_POOL_CHUNK (32u << 20)
+-#define GPU_POOL_CHUNKS 16
++/* Three 11,227,136-byte IOSurfaces or three 12 MiB Mesa textures fit in
++ * 36 MiB. The old 32 MiB chunks stranded 10,840 KiB after two surfaces.
++ * Keep the total budget at 512 MiB, including a smaller final chunk. */
++#define GPU_POOL_CHUNK (36u << 20)
++#define GPU_POOL_MAX_MB 512u
++#define GPU_POOL_CHUNKS 15
+ #define GPU_POOL_PAGES (GPU_POOL_CHUNK / PAGE_SIZE)
+ struct gpu_pool_chunk {
+ 	IOBufferMemoryDescriptor *memory;
+ 	uint8_t *kernel;
+ 	uint64_t address;
++	uint32_t pages;
+ 	/* PAGE_SIZE is a runtime variable in XNU's ARM kernel. Reserve enough
+ 	 * bits for its smallest supported page, then index using PAGE_SIZE. */
+ 	uint64_t used[GPU_POOL_CHUNK / PAGE_MIN_SIZE / 64];
+@@ -251,6 +256,7 @@ struct gpu_pool_chunk {
+ static struct gpu_pool_chunk gPool[GPU_POOL_CHUNKS];
+ static IOLock *gPoolLock;
+ static uint32_t gPoolCount, gPoolUsed, gPoolPeak, gPoolMisses, gPoolFallbacks;
++static uint32_t gPoolReserved, gPoolTakes, gPoolReturns;
+ 
+ static bool
+ gpuPoolPageUsed(uint32_t chunk, uint32_t page)
+@@ -273,8 +279,10 @@ gpuPoolMark(uint32_t chunk, uint32_t first, uint32_t pages, bool used)
+ 	if (used) {
+ 		gPoolUsed += pages;
+ 		gPoolPeak = MAX(gPoolPeak, gPoolUsed);
++		gPoolTakes++;
+ 	} else {
+ 		gPoolUsed -= pages;
++		gPoolReturns++;
+ 	}
+ }
+ 
+@@ -312,45 +320,50 @@ gpuPoolInit(void)
+ 	if (mb <= 0 || gPoolLock != NULL) {
+ 		return;
+ 	}
+-	mb = MIN(mb, (int)(GPU_POOL_CHUNKS * (GPU_POOL_CHUNK >> 20)));
+-	uint32_t count = ((uint32_t)mb + (GPU_POOL_CHUNK >> 20) - 1) / (GPU_POOL_CHUNK >> 20);
++	mb = MIN(mb, (int)GPU_POOL_MAX_MB);
++	uint32_t remaining = (uint32_t)mb << 20;
+ 	gPoolLock = IOLockAlloc();
+ 	if (gPoolLock == NULL) {
+ 		return;
+ 	}
+-	for (uint32_t i = 0; i < count; i++) {
++	for (uint32_t i = 0; i < GPU_POOL_CHUNKS && remaining != 0; i++) {
+ 		struct gpu_pool_chunk *c = &gPool[i];
+-		c->memory = gpuAllocate(GPU_POOL_CHUNK, &c->kernel, &c->address);
++		uint32_t bytes = MIN(remaining, GPU_POOL_CHUNK);
++		c->memory = gpuAllocate(bytes, &c->kernel, &c->address);
+ 		if (c->memory == NULL) {
+ 			break;
+ 		}
++		c->pages = bytes / PAGE_SIZE;
++		gPoolReserved += c->pages;
++		remaining -= bytes;
+ 		gPoolCount++;
+ 	}
+ 	IOLog("VinceGPU: GEM pool v1 reserved=%u MiB chunks=%u requested=%d MiB\n",
+-	    gPoolCount * (GPU_POOL_CHUNK >> 20), gPoolCount, mb);
++	    gPoolReserved * (PAGE_SIZE / 1024) / 1024, gPoolCount, mb);
+ 	IOLog("VinceGPU: pool v2: managed WC leases, GEM and IOSurface storage\n");
++	IOLog("VinceGPU: pool v3: 36 MiB packing, exact budget, bounded surface fallback\n");
+ }
+ 
+ static IOMemoryDescriptor *
+ gpuGemAllocate(uint64_t size, uint8_t **kernel, uint64_t *address)
+ {
+-	if (gPoolCount == 0) {
+-		return gpuAllocate(size, kernel, address);
+-	}
+ 	if (size == 0 || size > GPU_BUFFER_MAX || (size & PAGE_MASK)) {
+ 		return NULL;
+ 	}
++	if (gPoolLock == NULL) {
++		return gpuAllocate(size, kernel, address);
++	}
+ 	uint32_t pages = (uint32_t)(size / PAGE_SIZE);
+ 	uint32_t best = GPU_POOL_PAGES + 1, bestChunk = 0, first = 0, largest = 0;
+ 	IOLockLock(gPoolLock);
+ 	for (uint32_t i = 0; i < gPoolCount; i++) {
+-		for (uint32_t p = 0; p < GPU_POOL_PAGES;) {
++		for (uint32_t p = 0; p < gPool[i].pages;) {
+ 			if (gpuPoolPageUsed(i, p)) {
+ 				p++;
+ 				continue;
+ 			}
+ 			uint32_t start = p;
+-			while (p < GPU_POOL_PAGES && !gpuPoolPageUsed(i, p)) {
++			while (p < gPool[i].pages && !gpuPoolPageUsed(i, p)) {
+ 				p++;
+ 			}
+ 			uint32_t run = p - start;
+@@ -367,6 +380,9 @@ gpuGemAllocate(uint64_t size, uint8_t **kernel, uint64_t *address)
+ 			IOLog("VinceGPU: GEM pool exhausted request=%llu used=%u KiB peak=%u KiB largest=%u KiB\n",
+ 			    size, gPoolUsed * (PAGE_SIZE / 1024), gPoolPeak * (PAGE_SIZE / 1024),
+ 			    largest * (PAGE_SIZE / 1024));
++			IOLog("VinceGPU: pool leases takes=%u returns=%u live=%u reserved=%u KiB\n",
++			    gPoolTakes, gPoolReturns, gPoolTakes - gPoolReturns,
++			    gPoolReserved * (PAGE_SIZE / 1024));
+ 		}
+ 		IOLockUnlock(gPoolLock);
+ 		/* The reserve is full. A small buffer can still come from the ordinary
+@@ -432,11 +448,8 @@ vince_surface_allocate(uint32_t size, uintptr_t *kernelAddress)
+ 		return NULL;
+ 	}
+ 	IOMemoryDescriptor *memory = gpuGemAllocate(size, &kernel, &address);
+-	if (memory == NULL) {
+-		/* The reserve may be full of GEM; a surface can still use the
+-		 * ordinary contiguous allocator before falling back to a copy. */
+-		memory = gpuAllocate(size, &kernel, &address);
+-	}
++	/* gpuGemAllocate already handles no-reserve and small-buffer fallbacks.
++	 * Never repeat a large global VM scan after a pool miss. */
+ 	if (memory != NULL) {
+ 		*kernelAddress = (uintptr_t)kernel;
+ 	}

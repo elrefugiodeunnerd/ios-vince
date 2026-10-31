@@ -1004,3 +1004,60 @@ It uses the same verified 0203 kernel, 650 MHz request, 512 MiB reserve and
 shared DMA, adding only `glblit=0`. All packaging checks passed. Await the
 visual/input result, then recover logs for `-attachImage ... : its memory`,
 lower attachment/upload times and whether reserve exhaustion is delayed.
+
+### 0203 direct-target result: smoother, then allocation failure
+
+The user reports smoother swipes (still subjectively below 20 fps), followed
+by a black screen after several swipes. Recovered console:
+`artifacts/console-gpu-direct-0203.log`, 274,260 bytes, SHA-256
+`2656c8fcf8f043d30f73ca740f28ba1ac5ba75115a50f07a1c7748ce56183271`.
+650 MHz configuration, GPU memory-test PASS and valid FT5446 contacts are
+present. Direct targets reduce attachment time: frame 30 is 16.8 ms with
+248 us before it for IOSurfaces; frame 200 is 18.2 ms. These are bridge
+timings, not measured panel frame rate.
+
+After frame 260, a surface allocation fails at `used=397600 KiB` and
+`largest=10840 KiB`. The surface path retries the global contiguous
+allocator, then falls back to cached storage. Mesa's replacement 12 MiB
+texture also cannot fit: `glTexImage2D: error 0x505` is followed by
+`glDrawElements`/`glFlush: error 0x506` (incomplete framebuffer).
+The capture contains two out-of-memory errors, 58 invalid-framebuffer
+errors and 38 failed global contiguous scans, with no logged signal crash
+or VinceGPU stall/timeout. This establishes allocation failure as the
+immediate rendering failure; it does not demonstrate a shader regression
+or establish why so many buffers remain live.
+
+### 0204 pool packing and bounded surface fallback
+
+`0204-daisy-gpu-pool-packing.patch` changes the reserved allocator to 36 MiB
+chunks. A 512 MiB request allocates 14 full chunks plus an 8 MiB final chunk;
+the cap remains 512 MiB. Each chunk records its actual page count, and all
+searches stay within that count. Requested budgets are exact rather than
+rounded up to a whole chunk. Best-fit allocation can use the small final
+chunk and freed tails for smaller objects.
+
+Three 11,227,136-byte surfaces or three 12 MiB textures fit in each full
+chunk. Host tests of the actual patched allocator fit 42 of either size
+within the reserve, versus 32 with the old layout. This is a controlled
+capacity test, not a replay of the phone's mixed allocation lifetimes.
+
+`vince_surface_allocate()` now uses only `gpuGemAllocate()`'s fallback
+decision: no second ordinary allocation after a failure. With a reserve,
+only requests up to 1 MiB may fall back to ordinary contiguous storage.
+That limit also applies if all early reserve allocations fail. With the
+reserve disabled, the ordinary allocation path remains available.
+
+On pool misses, new `pool leases takes=... returns=... live=...` counters
+show reservations and returns (including descriptor-construction rollback).
+They help check reclamation without treating any still-referenced range
+as free. Persistent lease descriptors, mapping lifetimes and GPU fences
+continue to govern reuse.
+
+`python3 tools/tests/test_daisy_gpu_pool.py` passes with ASan/UBSan at both
+4 KiB and 16 KiB runtime page sizes. Coverage includes 42 full-size mixed
+GEM/surface allocations, exact/capped budgets, the final partial chunk,
+partial/failed reserves, no large VM retries, one small fallback attempt,
+111 zero-filled reuses, disjoint physical spans, failure unwind and ranges
+held by user mappings. Hardware validation is pending; the next image
+retains 650 MHz, `daisygpu_pool=512`, `daisysurface_dma=1`, `glfetch=0` and
+the smoother `glblit=0` direct path.
