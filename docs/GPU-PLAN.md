@@ -1061,3 +1061,28 @@ partial/failed reserves, no large VM retries, one small fallback attempt,
 held by user mappings. Hardware validation is pending; the next image
 retains 650 MHz, `daisygpu_pool=512`, `daisysurface_dma=1`, `glfetch=0` and
 the smoother `glblit=0` direct path.
+
+### 0204 build and temporary boot
+
+VINCE DEVELOPMENT [CI 41228965144](https://github.com/proxer05/ios-vince/actions/runs/41228965144)
+passed at `84cc108`, including the pool v3 and lease-counter linked-kernel
+checks. Verified artifacts:
+
+- Kernel: `artifacts/kernel-0204/kernel.development.vince`, SHA-256
+  `fdeb2c14eb12f54ac740915b72bd7b999b5d050758c27c835c930700ca5e114f`.
+- Image: `artifacts/daisy-gpu-direct-0204/daisy-boot.img`, 17,979,392 bytes,
+  SHA-256 `c3db45bb397ade6487de1ceadb355e9ae5f3d0caf597cdf2357b39159e036478`.
+- Packaging: `artifacts/build-daisy-0204.py --dma --direct --pool 512`,
+  with output recorded in `artifacts/daisy-0204-direct-package.log`.
+
+Artifact checksum, boot header/digest, appended Daisy DTBs, empty `second`,
+shim/ADT geometry and preserved 0194 SMP baseline all passed verification.
+The arguments match the previous direct-target test, including `cpus=1`,
+`adreno=11`, GPU memory test, 512 MiB, shared DMA, 650 MHz, `glfetch=0` and
+`glblit=0`.
+
+The phone was in TWRP. `adb reboot bootloader` followed by `fastboot boot`
+successfully transferred and started the image. Await the user's swipe
+test and recovered console before claiming iOS startup or stability.
+Check full `reserved=512 MiB chunks=15`, pool v3, memory-test PASS, touch,
+and any pool misses/lease counters preceding rendering errors.
