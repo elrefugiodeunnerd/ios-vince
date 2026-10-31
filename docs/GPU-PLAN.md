@@ -941,3 +941,23 @@ at `d55bcec`. Packaging helper: `artifacts/build-daisy-0203.py`; use
 `--dma --pool 512` for the clock test, or `--mhz 100` for a control image.
 Pinned source checksums are in
 `artifacts/daisy-clock-reference/GPU-650-SHA256SUMS`.
+
+### 0203 build and temporary boot
+
+CI 41226126241 passed, including linked-kernel markers. The downloaded
+artifact checksum and packaged boot header/digest, appended DTBs, empty
+`second`, shim/ADT geometry and preserved 0194 baseline all verified.
+
+- Kernel: `artifacts/kernel-0203/kernel.development.vince`, SHA-256
+  `e86b4fa21a7b41961fc78e5042a10c48b2a5a1c562bd0c69232c93969b1d31a1`.
+- Image: `artifacts/daisy-gpu-650-0203/daisy-boot.img`, 17,979,392 bytes,
+  SHA-256 `4a2b8c1ffc673672586ea62ca1cac6fe6d1cba8bdf446e8ed9b41df9ed646bf1`.
+- Arguments retain `cpus=1`, `adreno=11`, `daisygpu_test=1`,
+  `daisygpu_pool=512`, `glfetch=0` and `daisysurface_dma=1`, adding only
+  `daisygpu_mhz=650` to the previous 512 MiB test configuration.
+
+`fastboot -s 6790a29e0305 boot` transferred and started the image successfully.
+This confirms the temporary boot command, not successful iOS startup or a
+650 MHz hardware clock. Await the UI result and recover the console to check
+`GPU CX TURBO level384 result 0`, `configured 650 MHz`, memory-test PASS,
+touch power/report success, frame timings and pool failures.
