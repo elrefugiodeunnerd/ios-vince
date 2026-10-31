@@ -38,4 +38,5 @@ Three classes:
 | Upstream | Daisy | What |
 | --- | --- | --- |
 | hakios-xnu-kernel b6c1f82, 0dedaec, f6ebf31 | `0206-daisy-fb-refresh-rate.patch` | `IOMFBDisplayRefresh` on AppleCLCD: the refresh CoreAnimation clocks frames by, in 2^-32 s units plus the MachTime step, with `fb_hz`/`fb_ca_hz` boot args. Without it CA takes a built-in panel for 60 Hz whatever the timing says; the reference phone needed the 32.32 units fix (ticks read as 26844 Hz). |
-| (remaining 207 commits) | — | queued; see the inventory. |
+| hakios-xnu-kernel aadc757 | userland/gpu/eagl.c (repo, gpu-userland build) |  logs why a surface is copied rather than shared, for the first 40 refusals of a run (icons and glyphs: alpha first or not BGRA; nothing full-screen on the reference phone). |
+| (remaining 208 commits) | — | queued; see the inventory. |
