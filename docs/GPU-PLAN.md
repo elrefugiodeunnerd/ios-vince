@@ -961,3 +961,46 @@ This confirms the temporary boot command, not successful iOS startup or a
 650 MHz hardware clock. Await the UI result and recover the console to check
 `GPU CX TURBO level384 result 0`, `configured 650 MHz`, memory-test PASS,
 touch power/report success, frame timings and pool failures.
+
+### 0203 clock hardware result and direct-target experiment
+
+The user reports a successful boot with similar speed. Recovered console:
+`artifacts/console-gpu-650-0203.log`, 207,368 bytes, SHA-256
+`8c6ed0c7b999c8e864011b757e9197e0b3dd75429c9f034018daf79b004fb4ca`.
+It confirms:
+
+- `GPU CX TURBO level384 result 0` after the matching `smpa2/vlvl` ACK.
+- `configured 650 MHz`: GPLL3 `0x80000007`, L=67, alpha
+  `0xb5/0x55555600`, GFX3D CFG=`0x201`, BHS ACK and memory-acceleration
+  corner 2. This is the hardware register/lock result, not an independent
+  frequency-counter measurement.
+- Full 512 MiB reserve and allocator-backed GPU memory-test PASS.
+- The subsequent FT5446 L10/L6 votes receive ACKs with message IDs 2/3;
+  touch reports in this short capture are all idle/malformed, with no
+  valid contacts. Contact input still needs checking in the next test.
+- Only 19 frame summaries, no logged pool failure, GL error or signal crash.
+  Several full-size attachments take 0.49–0.64 seconds in the bridge's
+  `before it for the IOSurfaces` timing. This is not a sustained app-switcher
+  stress test and cannot establish longer-term pool behaviour.
+
+The EAGL bridge defaults `blit_targets=1`. `my_attachImage()` imports a
+mirror surface, keeps a separate ordinary render texture, then calls
+`surface_changed()` and `surface_to_texture()` to populate that texture.
+Thus every new target still reads/hashes and uploads roughly 11 MiB from
+the WC surface, and retains two full-size buffers, even though presentation
+reports `drawn in place`. This explains a major cost outside GPU execution.
+
+The existing `glblit=0` option instead calls `surface_shared()` directly
+for eligible non-inverted BGRA targets. It avoids both the initial copy
+and the second target allocation. The root-build binary contains this
+option and `glfetch=0`; no userland rebuild is needed. The imported bridge's
+mirror default addressed A6xx framebuffer-fetch artifacts, so test blur,
+icons and Control Center with Daisy's existing `glfetch=0` fallback.
+
+Packaged and temporarily booted `artifacts/daisy-gpu-direct-0203/daisy-boot.img`
+(17,979,392 bytes), SHA-256
+`7e3f4680272b575b989bd22e3f4f84273e26538127c3b0312b75d97080a80528`.
+It uses the same verified 0203 kernel, 650 MHz request, 512 MiB reserve and
+shared DMA, adding only `glblit=0`. All packaging checks passed. Await the
+visual/input result, then recover logs for `-attachImage ... : its memory`,
+lower attachment/upload times and whether reserve exhaustion is delayed.
