@@ -1,0 +1,307 @@
+diff --git a/bsd/dev/daisy_gpu_clock.h b/bsd/dev/daisy_gpu_clock.h
+new file mode 100644
+index 0000000..8c651e3
+--- /dev/null
++++ b/bsd/dev/daisy_gpu_clock.h
+@@ -0,0 +1,165 @@
++/*
++ * MSM8953/Daisy only, included by vince_adreno.c after its MMIO helpers.
++ * daisygpu_mhz=650, adreno=11 and daisygpu_test=1 select this startup path.
++ *
++ * Xiaomi_Kernel_OpenSource 6421aa5cdc56e9ef7c6329e0a05164503e1513ef:
++ * clock-gcc-8953.c (GPLL3, 1-2 GHz VCO, /2, GFX source 2/div1);
++ * clock-alpha-pll.c (1500 MHz calibration, dynamic slew, 40-bit alpha);
++ * msm8953-regulator.dtsi (CX TURBO, BHS, mem-acc corner 2).
++ * This is not Cobalt GPUCC/Fabia and not Hakios's A642L/GMU/RPMh path.
++ *
++ * Run before CP startup. The proven LK handoff already selects BHS with
++ * its hardware acknowledgement set (control 0x80000038, status 0x3).
++ * Require that state rather than transitioning an unobserved live LDO.
++ * Keep the acknowledged CX vote until reboot, including on clock failure.
++ */
++extern int daisy_gpu_cx_turbo(void);
++
++#define DG_PLL_MODE       0x22000u
++#define DG_PLL_L          0x22004u
++#define DG_PLL_ALPHA      0x22008u
++#define DG_PLL_ALPHA_HI   0x2200cu
++#define DG_PLL_USER       0x22010u
++#define DG_PLL_USER_HI    0x22014u
++#define DG_PLL_CONFIG     0x22018u
++#define DG_PLL_TEST       0x2201cu
++#define DG_PLL_TEST_HI    0x22020u
++#define DG_LOCK           (1u << 31)
++#define DG_UPDATE         (1u << 22)
++#define DG_MEM_ACC_PA     0x01944000u
++#define DG_MEM_ACC_OFF    0x15cu
++#define DG_RCG_MASK       0x71fu
++#define DG_RCG_650        0x201u
++
++static bool
++dg_wait(vm_offset_t base, uint32_t off, uint32_t mask, uint32_t value)
++{
++	for (unsigned i = 0; i < 1000; i++) {
++		if ((reg_read(base, off) & mask) == value) { return true; }
++		delay(1);
++	}
++	printf("DAISY GPU CLOCK: timeout off=%#x value=%#x mask=%#x want=%#x\n",
++	    off, reg_read(base, off), mask, value);
++	return false;
++}
++
++static void
++dg_pll_rate(uint32_t hz)
++{
++	/* Stock round_rate_up uses 32 fractional bits, shifted into 40-bit HW. */
++	uint64_t alpha = (((uint64_t)(hz % 19200000u) << 32) + 19199999u) / 19200000u;
++	alpha <<= 8;
++	reg_write(gcc_va, DG_PLL_L, hz / 19200000u);
++	reg_write(gcc_va, DG_PLL_ALPHA, (uint32_t)alpha);
++	reg_write(gcc_va, DG_PLL_ALPHA_HI, (uint32_t)(alpha >> 32));
++}
++
++static bool
++dg_pll_matches(void)
++{
++	/* 1300 MHz rounded up: L=67, alpha=0xb555555600, post-divider /2. */
++	return (reg_read(gcc_va, DG_PLL_MODE) & (DG_LOCK | DG_UPDATE | 7u)) == (DG_LOCK | 7u) &&
++	       reg_read(gcc_va, DG_PLL_L) == 67u &&
++	       reg_read(gcc_va, DG_PLL_ALPHA) == 0x55555600u &&
++	       reg_read(gcc_va, DG_PLL_ALPHA_HI) == 0xb5u &&
++	       (reg_read(gcc_va, DG_PLL_USER) & 0x01300f0fu) == 0x01000101u;
++}
++
++static bool
++dg_pll_start(void)
++{
++	uint32_t mode = reg_read(gcc_va, DG_PLL_MODE);
++	if (dg_pll_matches()) { return true; }
++	/* Never reprogram an enabled, transitioning or firmware-owned PLL. */
++	if (mode & (DG_LOCK | (1u << 30) | DG_UPDATE | (1u << 20) | 7u)) {
++		printf("DAISY GPU CLOCK: GPLL3 handoff not idle/1300 MHz (%#x)\n", mode);
++		return false;
++	}
++	reg_write(gcc_va, DG_PLL_CONFIG, 0x4001055bu);
++	uint32_t user = reg_read(gcc_va, DG_PLL_USER);
++	user = (user & ~0x01300f0fu) | 0x01000101u; /* VCO0, alpha, /2, main */
++	reg_write(gcc_va, DG_PLL_USER, user);
++	reg_write(gcc_va, DG_PLL_USER_HI, reg_read(gcc_va, DG_PLL_USER_HI) & ~(1u << 11));
++	reg_write(gcc_va, DG_PLL_TEST, 0);
++	reg_write(gcc_va, DG_PLL_TEST_HI, 0);
++	dg_pll_rate(1500000000u);
++	reg_write(gcc_va, DG_PLL_MODE, mode | 2u); /* bypass off */
++	delay(5);
++	reg_write(gcc_va, DG_PLL_MODE, mode | 6u); /* reset released, output off */
++	if (!dg_wait(gcc_va, DG_PLL_MODE, DG_LOCK, DG_LOCK)) { goto fail; }
++	dg_pll_rate(1300000000u);
++	reg_write(gcc_va, DG_PLL_MODE, reg_read(gcc_va, DG_PLL_MODE) | DG_UPDATE);
++	if (!dg_wait(gcc_va, DG_PLL_MODE, DG_UPDATE, 0)) { goto fail; }
++	delay(1); /* >=570 ns between update completion and LOCK sampling */
++	if (!dg_wait(gcc_va, DG_PLL_MODE, DG_LOCK, DG_LOCK)) { goto fail; }
++	reg_write(gcc_va, DG_PLL_MODE, reg_read(gcc_va, DG_PLL_MODE) | 1u);
++	if (dg_pll_matches()) { return true; }
++fail:
++	/* GFX is still on GPLL0. This PLL was off when we took ownership. */
++	reg_write(gcc_va, DG_PLL_MODE, reg_read(gcc_va, DG_PLL_MODE) & ~1u);
++	delay(1);
++	reg_write(gcc_va, DG_PLL_MODE, mode & ~7u);
++	return false;
++}
++
++static bool
++dg_rcg_set(uint32_t cfg)
++{
++	reg_write(gcc_va, GCC_GFX3D_CFG_RCGR, cfg);
++	reg_write(gcc_va, GCC_GFX3D_CMD_RCGR, reg_read(gcc_va, GCC_GFX3D_CMD_RCGR) | 1u);
++	return dg_wait(gcc_va, GCC_GFX3D_CMD_RCGR, 1u, 0) &&
++	       reg_read(gcc_va, GCC_GFX3D_CFG_RCGR) == cfg &&
++	       dg_wait(gcc_va, GCC_GFX3D_CMD_RCGR, 1u << 31, 0) &&
++	       dg_wait(gcc_va, GCC_OXILI_GFX3D_CBCR, 1u << 31, 0);
++}
++
++static bool
++daisy_gpu_clock_start(void)
++{
++	uint32_t mhz = 0, test = 0;
++	if (!PE_parse_boot_argn("daisygpu_mhz", &mhz, sizeof(mhz)) || !mhz) { return true; }
++	PE_parse_boot_argn("daisygpu_test", &test, sizeof(test));
++	if (mhz != 650 || last_step != 11 || skip_steps || !test) {
++		printf("DAISY GPU CLOCK: requires mhz650, full bringup and memory test\n");
++		return true;
++	}
++	uint32_t old_cfg = reg_read(gcc_va, GCC_GFX3D_CFG_RCGR);
++	uint32_t ctl = reg_read(gcc_va, GCC_GFX_PWRSWITCH_CTRL);
++	uint32_t status = reg_read(gcc_va, GCC_GFX_PWRSWITCH_STATUS);
++	printf("DAISY GPU CLOCK: request650 CFG=%#x BHS=%#x/%#x GPLL3=%#x\n",
++	    old_cfg, ctl, status, reg_read(gcc_va, DG_PLL_MODE));
++	/* BHS under GDSC, LDO under SW and powered down, no fake ACK/CPR bypass. */
++	if ((ctl & 0x400003b7u) != 0x30u || !(status & 2u) ||
++	    (old_cfg & 0x371fu) != 0x507u ||
++	    (reg_read(gcc_va, GCC_GFX3D_CMD_RCGR) & 0x80000003u) != 2u ||
++	    !(reg_read(gcc_va, GCC_OXILI_CX_GDSCR) & GDSC_PWR_ON) ||
++	    !(reg_read(gcc_va, GCC_OXILI_GX_GDSCR) & GDSC_PWR_ON)) {
++		printf("DAISY GPU CLOCK: handoff rejected; keeping startup clock\n");
++		return true;
++	}
++	vm_offset_t acc = ml_io_map(DG_MEM_ACC_PA, 0x1000);
++	if (!acc || daisy_gpu_cx_turbo() != 0) {
++		printf("DAISY GPU CLOCK: power prerequisite failed; keeping startup clock\n");
++		return true;
++	}
++	/* Corner 2 is bit0=0. Raise voltage before selecting faster SRAM timing. */
++	reg_write(acc, DG_MEM_ACC_OFF, reg_read(acc, DG_MEM_ACC_OFF) & ~1u);
++	if ((reg_read(acc, DG_MEM_ACC_OFF) & 1u) ||
++	    (reg_read(gcc_va, GCC_GFX_PWRSWITCH_CTRL) & 0x400003b7u) != 0x30u ||
++	    !(reg_read(gcc_va, GCC_GFX_PWRSWITCH_STATUS) & 2u) || !dg_pll_start()) {
++		printf("DAISY GPU CLOCK: power/PLL check failed; keeping startup clock\n");
++		return true;
++	}
++	if (!dg_rcg_set((old_cfg & ~DG_RCG_MASK) | DG_RCG_650) || !dg_pll_matches()) {
++		bool restored = dg_rcg_set(old_cfg);
++		printf("DAISY GPU CLOCK: switch failed; startup clock restored=%u\n", restored);
++		/* An unacknowledged rollback stops bringup before any CP/GPU service. */
++		return restored;
++	}
++	printf("DAISY GPU CLOCK: configured 650 MHz, CX TURBO ACK, BHS ACK, mem-acc2; "
++	    "GPLL3=%#x L=%u alpha=%#x/%#x CFG=%#x\n",
++	    reg_read(gcc_va, DG_PLL_MODE), reg_read(gcc_va, DG_PLL_L),
++	    reg_read(gcc_va, DG_PLL_ALPHA_HI), reg_read(gcc_va, DG_PLL_ALPHA),
++	    reg_read(gcc_va, GCC_GFX3D_CFG_RCGR));
++	return true;
++}
+diff --git a/bsd/dev/daisy_touch_rpm.c b/bsd/dev/daisy_touch_rpm.c
+index 5840fc7..cc2941e 100644
+--- a/bsd/dev/daisy_touch_rpm.c
++++ b/bsd/dev/daisy_touch_rpm.c
+@@ -1,11 +1,14 @@
+ /*
+- * Daisy FT5446 supplies, opt-in and called once by the sole input thread.
++ * Daisy FT5446 supplies and opt-in GPU CX vote, serialized at input startup.
+  * Legacy SMD RPM channel, not the byte-flag Pronto transport in vince_smd.c.
+  * References: Linux v6.12 {qcom_smd.c,smd-rpm.c,qcom_smd-regulator.c};
+  * grinkodbogdan/rpiios 15fc60d's redwood_tissot_rpm.c. The doorbell is from
+  * Daisy's recovered DT: 0x0b011008 bit 0 (not the reference's 0x0b111008).
+- * Only two active-set votes: L10 2.85 V, then L6 1.8 V. No PMIC writes,
+- * sleep votes, L5 changes, voltage guessing, or automatic request retries.
++ * Touch keeps its two active-set votes: L10 2.85 V, then L6 1.8 V.
++ * GPU startup may first vote smpa2 swen=1/vlvl=384 (CX TURBO), per Xiaomi
++ * msm8953-regulator.dtsi and rpm-smd-regulator.c. No direct PMIC writes.
++ * vince_input_start completes GPU startup before creating the touch thread;
++ * both reuse the channel, without resetting it between requests or retrying.
+  */
+ #if defined(ARM64_BOARD_CONFIG_VINCE)
+ #include <sys/param.h>
+@@ -18,6 +21,7 @@
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ int daisy_touch_power_on(void);
+ int daisy_touch_rpm_layout(void);
++int daisy_gpu_cx_turbo(void);
+ 
+ #define DR_SMEM 0x86300000u
+ #define DR_SIZE 0x100000u
+@@ -46,6 +50,8 @@ static vm_offset_t dr_smem, dr_ipc, dr_tx, dr_rx, dr_out, dr_in;
+ static uint32_t dr_half, dr_id;
+ static int dr_wait, dr_result = -1;
+ static bool dr_attempted;
++static bool dr_opened, dr_gpu_attempted;
++static int dr_gpu_result = -1;
+ static unsigned dr_layout_stage;
+ 
+ static uint32_t
+@@ -217,6 +223,12 @@ daisy_touch_rpm_layout(void)
+ static int
+ dr_open(void)
+ {
++	/* GPU startup precedes the only touch/RPM thread. Keep its active votes. */
++	if (dr_opened) {
++		return dr_tx && dr_rx && dr_out && dr_in && dr_half &&
++		       dr_rd(dr_tx, DR_STATE) == DR_OPENED &&
++		       dr_rd(dr_rx, DR_STATE) == DR_OPENED ? 0 : -3;
++	}
+ 	int r = dr_layout();
+ 	if (r) { return r; }
+ 	printf("DAISY RPM: half%u states%u/%u ipc%x\n", dr_half,
+@@ -247,6 +259,7 @@ dr_open(void)
+ 	for (unsigned i = 0; i < 200; i++) {
+ 		if (dr_rd(dr_rx, DR_STATE) == DR_OPENED) {
+ 			dr_wr(dr_rx, DR_FSTATE, 0);
++			dr_opened = true;
+ 			return 0;
+ 		}
+ 		dr_sleep();
+@@ -287,12 +300,11 @@ dr_ack(const uint32_t *p, unsigned bytes, uint32_t expected)
+ }
+ 
+ static int
+-dr_vote(unsigned ldo, uint32_t uv)
++dr_request(uint32_t resource, unsigned number, uint32_t key, uint32_t value)
+ {
+-	if (!((ldo == 10 && uv == 2850000) || (ldo == 6 && uv == 1800000))) { return -9; }
+ 	uint32_t id = ++dr_id;
+-	uint32_t packet[] = {52, 0, 0, 0, 0, DR_REQ, 44, id, 0, 0x616f646c, ldo, 24,
+-	    0x6e657773, 4, 1, 0x00007675, 4, uv};
++	uint32_t packet[] = {52, 0, 0, 0, 0, DR_REQ, 44, id, 0, resource, number, 24,
++	    0x6e657773, 4, 1, key, 4, value};
+ 	uint32_t head, tail;
+ 	unsigned sent = 0;
+ 	for (unsigned i = 0; i < 200; i++) {
+@@ -332,7 +344,8 @@ dr_vote(unsigned ldo, uint32_t uv)
+ 				dr_signal();
+ 				int r = dr_ack(answer, bytes, id);
+ 				if (r <= 0) {
+-					printf("DAISY RPM: L%u uv%u id%u r%d ack %x/%x/%x\n", ldo, uv, id, r,
++					printf("DAISY RPM: resource%x/%u key%x value%u id%u r%d ack %x/%x/%x\n",
++					    resource, number, key, value, id, r,
+ 					    answer[0], answer[1], answer[2]);
+ 					return r;
+ 				}
+@@ -344,6 +357,27 @@ dr_vote(unsigned ldo, uint32_t uv)
+ 	return -5;
+ }
+ 
++static int
++dr_vote(unsigned ldo, uint32_t uv)
++{
++	if (!((ldo == 10 && uv == 2850000) || (ldo == 6 && uv == 1800000))) { return -9; }
++	return dr_request(0x616f646c, ldo, 0x00007675, uv);
++}
++
++int
++daisy_gpu_cx_turbo(void)
++{
++	if (dr_gpu_attempted) { return dr_gpu_result; }
++	dr_gpu_attempted = true;
++	dr_gpu_result = dr_open();
++	if (!dr_gpu_result) {
++		/* smpa2 is PM8953 S2/CX; vlvl is a firmware level, not microvolts. */
++		dr_gpu_result = dr_request(0x61706d73, 2, 0x6c766c76, 384);
++	}
++	printf("DAISY RPM: GPU CX TURBO level384 result %d\n", dr_gpu_result);
++	return dr_gpu_result;
++}
++
+ int
+ daisy_touch_power_on(void)
+ {
+diff --git a/bsd/dev/vince_adreno.c b/bsd/dev/vince_adreno.c
+index 3be5022..23b239d 100644
+--- a/bsd/dev/vince_adreno.c
++++ b/bsd/dev/vince_adreno.c
+@@ -278,6 +278,8 @@ vince_scm_invoke(const char *desc, uint64_t fnid, uint64_t args, uint64_t arg0,
+ }
+ 
+ 
++#include "daisy_gpu_clock.h"
++
+ /* Step 1: Read GCC Clocks */
+ static bool
+ step1_read_clocks(void)
+@@ -483,7 +485,7 @@ step5_enable_clocks(void)
+ 	    reg_read(gcc_va, GCC_BIMC_GFX_CBCR));
+ 
+ 	delay(50);
+-	return true;
++	return daisy_gpu_clock_start();
+ }
+ 
+ /* Step 6: Read Adreno 506 Core Hardware Registers (Pre-ZAP direct verification) */

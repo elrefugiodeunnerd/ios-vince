@@ -4,6 +4,7 @@ static uint32_t aux[DR_AUX_SIZE / 4];
 static uint32_t *peer_info, *peer_fifo;
 static unsigned aux_maps;
 static unsigned notifications, packets, waits, ring_writes, channel_writes, diag_maps;
+static unsigned gpu_packets, channel_resets;
 static unsigned fail_open, fail_map, bad_ack, stale_left, error_ldo;
 static bool no_ack, full_fifo, delay_reply;
 static unsigned delayed;
@@ -45,6 +46,9 @@ fresh_rpm(void)
 	dr_half = dr_id = 0;
 	dr_attempted = false;
 	dr_result = -1;
+	dr_opened = dr_gpu_attempted = false;
+	dr_gpu_result = -1;
+	gpu_packets = channel_resets = 0;
 	item(13, TABLE_OFF, 64 * 32);
 	item(14 + CID, INFO_OFF, 88);
 	item(338 + CID, FIFO_OFF, 1024);
@@ -140,10 +144,16 @@ peer(void)
 		packets++;
 		assert(p[0] == 52 && !(p[1] | p[2] | p[3] | p[4]));
 		assert(p[5] == DR_REQ && p[6] == 44 && p[7] == dr_id && p[8] == 0);
-		assert(p[9] == 0x616f646c && p[11] == 24);
+		assert(p[11] == 24);
 		assert(p[12] == 0x6e657773 && p[13] == 4 && p[14] == 1);
-		assert(p[15] == 0x7675 && p[16] == 4);
-		assert((p[10] == 10 && p[17] == 2850000) || (p[10] == 6 && p[17] == 1800000));
+		assert(p[16] == 4);
+		if (p[9] == 0x61706d73) {
+			assert(p[10] == 2 && p[15] == 0x6c766c76 && p[17] == 384);
+			gpu_packets++;
+		} else {
+			assert(p[9] == 0x616f646c && p[15] == 0x7675);
+			assert((p[10] == 10 && p[17] == 2850000) || (p[10] == 6 && p[17] == 1800000));
+		}
 		pending_id = p[7];
 		if (no_ack) { return; }
 		if (delay_reply) { delayed = 2; return; }
@@ -186,6 +196,7 @@ mock_rpm_wr(vm_offset_t base, uint32_t off, uint32_t value)
 	}
 	if (base == dr_tx || base == dr_rx) {
 		channel_writes++;
+		if (base == dr_tx && off == DR_STATE && value == 0) { channel_resets++; }
 		assert(off < DR_HALF);
 		if (base == dr_rx) {
 			assert(off == DR_TAIL || off == DR_FHEAD || off == DR_FTAIL || off == DR_FSTATE);
@@ -225,6 +236,26 @@ ml_io_map(vm_offset_t addr, vm_size_t n)
 int
 main(void)
 {
+	/* GPU runs before the touch thread; keep one channel and distinct ACK IDs. */
+	fresh_rpm(); daisy_aux_layout(true, true);
+	assert(daisy_gpu_cx_turbo() == 0 && packets == 1 && gpu_packets == 1);
+	assert(daisy_gpu_cx_turbo() == 0 && packets == 1);
+	assert(daisy_touch_power_on() == 0 && packets == 3 && dr_id == 3);
+	assert(channel_resets == 1 && gpu_packets == 1);
+	/* A rejected CX vote cannot be mistaken for an ACK or suppress touch. */
+	fresh_rpm(); error_ldo = 1;
+	assert(daisy_gpu_cx_turbo() == -7 && packets == 1);
+	assert(daisy_gpu_cx_turbo() == -7 && packets == 1);
+	assert(daisy_touch_power_on() == 0 && packets == 3 && channel_resets == 1);
+	fresh_rpm(); no_ack = true;
+	assert(daisy_gpu_cx_turbo() == -5 && packets == 1 && waits == 400);
+	assert(daisy_gpu_cx_turbo() == -5 && packets == 1);
+	no_ack = false;
+	assert(daisy_touch_power_on() == 0 && packets == 3 && channel_resets == 1);
+	/* A lost established channel is not silently reset with live CX votes. */
+	fresh_rpm(); assert(daisy_gpu_cx_turbo() == 0);
+	RX(DR_STATE) = 0;
+	assert(daisy_touch_power_on() == -3 && packets == 1 && channel_resets == 1);
 	/* The on-device layout selects edge 15/CID4, even beside other RPM edges. */
 	for (unsigned regions = 0; regions < 4; regions++) {
 		fresh_rpm(); daisy_aux_layout(regions & 1, regions & 2);
@@ -380,6 +411,6 @@ main(void)
 	assert(dr_ack(ack, 32, 42) == -7);
 	ack[6] = 5;
 	assert(dr_ack(ack, 32, 42) == -6);
-	puts("PASS: Daisy primary/aux SMEM bounds, read-only snapshots, handshake, votes, FIFO/ACK safety");
+	puts("PASS: Daisy SMEM bounds, snapshots, touch/CX votes, channel reuse, FIFO/ACK failures");
 	return 0;
 }

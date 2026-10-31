@@ -841,3 +841,80 @@ reserve and keeps `glfetch=0`; a second image enables
 `daisysurface_dma=1` so the shared path can be compared with the same
 fallback in place.
 
+### 0202 hardware result and 512 MiB test
+
+VINCE build [41218400794](https://github.com/proxer05/ios-vince/actions/runs/41218400794)
+on `ci-macos15` passed with Xcode 16.0, and the shared image reached the UI.
+The user reports a small improvement. Kernel SHA-256:
+`d75fbd2916b796c2f363ba9738fd188f7db20ed117a9871542abb2e4d53f55cf`.
+Both copy/shared images are under `artifacts/daisy-gpu-{copy,shared}-0202/`.
+
+The recovered console `artifacts/console-gpu-shared-0202-20261031.log`
+(254,346 bytes, SHA-256
+`69510359d9e5724de85eba2b8ced28abdb7ec20775108f60b47d2bc365f61a03`)
+confirms the full 384 MiB reserve, memory-test PASS, shared imports, and early
+draw-in-place frames around 30–60 ms (frame 100: 26.8 ms). After frame 120,
+11,227,136-byte surface allocations fail at `used=304552 KiB`,
+`largest=10840 KiB`; later frames use cached copy-out again at 170–200 ms.
+There is no crash marker in this capture, but also no successful small-buffer
+fallback marker: this run does not establish that the fallback prevented a crash.
+
+The same kernel was repackaged with `daisygpu_pool=512` and temporarily booted:
+`artifacts/daisy-gpu-shared-0202-512/daisy-boot.img`, SHA-256
+`cd149fcea729173f54e55b9a4e1a9cd5e352e756873586a4925eafadd57d0e97`.
+The user supplied three later failures at `used=417868`, `418484`, and
+`419100 KiB`, all with `largest=10840 KiB`. Increasing capacity delayed the
+failure without removing fragmentation. A 1 GiB reserve is inappropriate for
+the current `0x57f00000` (1407 MiB) XNU RAM window; investigate packing and
+small-buffer placement while keeping the 512 MiB test budget.
+
+### 0203 opt-in 650 MHz clock
+
+`0203-daisy-gpu-650mhz.patch` adds `daisygpu_mhz=650`, requiring full
+`adreno=11` startup, no skipped steps, and `daisygpu_test=1`. It runs after
+the existing low-clock setup, before CP startup and the allocator-backed
+GPU self-test. CI now uses the macos-15/Xcode 16.0 combination that built
+the boot-tested 0202 kernel.
+
+The sequence follows the pinned MSM8953 source listed in the clock section:
+
+1. Require the observed LK BHS handoff (`PWRSWITCH_CTRL=0x80000038`,
+   `STATUS=0x3`), live CX/GX domains and the acknowledged 100 MHz root.
+2. Send active-set `smpa` resource 2, `swen=1`, `vlvl=384` (CX TURBO).
+   Wait for the matching non-error RPM ACK. Reuse the SMD channel for the
+   later FT5446 votes; GPU startup completes before that thread is created.
+3. Clear graphics memory-acceleration bit 0 at `0x0194415c` (corner 2)
+   after the voltage vote, and recheck BHS and memory-timing readback.
+4. For an idle GPLL3 at GCC offset `0x22000`, use the stock configuration
+   and /2 output, calibrate at 1500 MHz with output disconnected, then slew
+   to 1300 MHz. Require update completion, lock and rate-register readback.
+   A matching already-running PLL can be reused; other active/FSM states
+   are rejected rather than reprogrammed.
+5. Switch GFX3D at offset `0x59000` to source 2/div1 (`CFG=0x201`),
+   checking update and root/branch status. A failed switch restores the
+   startup root; failed restoration stops bringup before CP/service startup.
+
+The CX vote remains active until reboot. The path requires the existing
+BHS supply state and does not attempt an unobserved live LDO transition.
+The successful marker reports configured frequency, not an independent
+frequency-counter measurement. Hardware validation is pending.
+
+The earlier investigation of `clock-gpu-cobalt.c` was for the wrong platform:
+Daisy uses `clock-gcc-8953.c`, GPLL3 and legacy SMD RPM, not Cobalt GPUCC/Fabia.
+Hakios `drivers/gpu/hakios.adreno.c` at
+`85bb05f0a4ed09e4e275f64047afed0122f59180` confirms its frequency selection is
+through the A642L's GMU/RPMh path, so its register sequence is not transferable.
+The existing [hakios-metal](https://github.com/oosexgang/hakios-metal) userland
+reference remains relevant to rendering, not MSM8953 power programming.
+
+Host verification passed:
+
+```sh
+python3 tools/tests/test_daisy_touch_rpm.py
+python3 tools/tests/test_daisy_gpu_clock.py
+```
+
+These apply the real patch chain and check exact touch/CX packets, shared
+channel lifetime, ACK errors/timeouts, power-before-clock ordering, PLL
+calibration/slew and lock failures, opt-in/handoff rejection and RCG rollback.
+The MMIO peer does not establish hardware clock or voltage behaviour.

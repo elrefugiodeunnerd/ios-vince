@@ -26,6 +26,10 @@ def main():
             "git", "-C", str(work), "apply", "--include=bsd/dev/daisy_touch_rpm.c",
             str(ROOT / "xnu/patches/0189-daisy-rpm-aux-smem.patch"),
         ], check=True)
+        subprocess.run([
+            "git", "-C", str(work), "apply", "--include=bsd/dev/daisy_touch_rpm.c",
+            str(ROOT / "xnu/patches/0203-daisy-gpu-650mhz.patch"),
+        ], check=True)
         source = (work / "bsd/dev/daisy_touch_rpm.c").read_text()
         source = re.sub(r"^#include .*\n", "", source, flags=re.M)
         for name, body in (
