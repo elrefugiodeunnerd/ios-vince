@@ -1,3 +1,17 @@
+static void checkLeaseDuringTeardown(uint64_t pa, uint64_t size) {
+    // The persistent prepared VM entry must be torn down while its span is
+    // still reserved. A concurrent allocator must not reuse it sooner.
+    for (unsigned i = 0; i < gPoolCount; ++i) {
+        if (pa < gPool[i].address || pa - gPool[i].address >= (uint64_t)gPool[i].pages * PAGE_SIZE)
+            continue;
+        unsigned first = (pa - gPool[i].address) / PAGE_SIZE;
+        for (unsigned p = first; p < first + size / PAGE_SIZE; ++p)
+            assert(gpuPoolPageUsed(i, p));
+        return;
+    }
+    assert(false);
+}
+
 static IOMemoryDescriptor *allocate(uint64_t size, uint8_t **bytes = nullptr) {
     uint8_t *kernel; uint64_t address;
     auto md = gpuGemAllocate(size, &kernel, &address);

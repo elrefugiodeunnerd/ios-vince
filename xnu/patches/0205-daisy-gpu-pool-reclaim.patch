@@ -1,0 +1,35 @@
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+index 3ce6501..4f98473 100755
+--- a/iokit/Kernel/arm/VinceGPU.cpp
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -303,11 +303,19 @@ OSDefineMetaClassAndStructors(VinceGPUPoolMemory, IOGeneralMemoryDescriptor);
+ void
+ VinceGPUPoolMemory::free()
+ {
+-	/* Tear down the prepared VM entry before the range can be leased again. */
++	/* IOGeneralMemoryDescriptor::free() tears down the prepared VM entry
++	 * and ultimately calls OSObject::free(), which deletes this object.
++	 * Save the lease first; no member access is valid after the base call.
++	 * The range must stay reserved until that teardown has finished. */
++	const uint32_t leaseChunk = chunk, leaseFirst = first, leasePages = pages;
+ 	IOGeneralMemoryDescriptor::free();
+-	if (pages != 0) {
++	if (leasePages != 0) {
+ 		IOLockLock(gPoolLock);
+-		gpuPoolMark(chunk, first, pages, false);
++		gpuPoolMark(leaseChunk, leaseFirst, leasePages, false);
++		if (gPoolReturns <= 4) {
++			IOLog("VinceGPU: pool reclaimed pages=%u used=%u KiB returns=%u\n",
++			    leasePages, gPoolUsed * (PAGE_SIZE / 1024), gPoolReturns);
++		}
+ 		IOLockUnlock(gPoolLock);
+ 	}
+ }
+@@ -342,6 +350,7 @@ gpuPoolInit(void)
+ 	    gPoolReserved * (PAGE_SIZE / 1024) / 1024, gPoolCount, mb);
+ 	IOLog("VinceGPU: pool v2: managed WC leases, GEM and IOSurface storage\n");
+ 	IOLog("VinceGPU: pool v3: 36 MiB packing, exact budget, bounded surface fallback\n");
++	IOLog("VinceGPU: pool v4: reclaim leases after descriptor teardown\n");
+ }
+ 
+ static IOMemoryDescriptor *

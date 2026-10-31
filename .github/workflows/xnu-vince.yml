@@ -119,6 +119,8 @@ jobs:
               b'DAISY GPU CLOCK: switch failed; startup clock restored=',
               b'VinceGPU: pool v3: 36 MiB packing, exact budget, bounded surface fallback',
               b'VinceGPU: pool leases takes=',
+              b'VinceGPU: pool v4: reclaim leases after descriptor teardown',
+              b'VinceGPU: pool reclaimed pages=',
           ):
               if marker not in data:
                   raise SystemExit(f'{kernel}: missing daisy fix marker {marker!r}')

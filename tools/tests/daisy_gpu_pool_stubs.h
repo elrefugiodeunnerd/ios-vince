@@ -49,9 +49,11 @@ class OSObject {
     unsigned refs = 1;
 public:
     virtual ~OSObject() = default;
-    virtual void free() {}
+    // XNU OSObject::free() destroys the object; release() does not delay it
+    // until the most-derived free() returns. Model that contract exactly.
+    virtual void free() { delete this; }
     void retain() { ++refs; }
-    void release() { assert(refs); if (!--refs) { free(); delete this; } }
+    void release() { assert(refs); if (!--refs) free(); }
 };
 class IOMemoryMap;
 class IOMemoryDescriptor : public OSObject {
@@ -67,13 +69,14 @@ class IOMemoryMap : public OSObject {
 public:
     IOMemoryDescriptor *md;
     explicit IOMemoryMap(IOMemoryDescriptor *p) : md(p) { p->retain(); }
-    void free() override { md->release(); }
+    void free() override { md->release(); OSObject::free(); }
 };
 IOMemoryMap *IOMemoryDescriptor::map() { return new IOMemoryMap(this); }
 static unsigned physicalCalls, failPhysicalAt;
 static uint64_t nextPA = 0xa4000000;
 static bool failDescriptor, failSpan;
 static unsigned preparations, completions;
+static void checkLeaseDuringTeardown(uint64_t, uint64_t);
 struct Allocation { uintptr_t base; uint64_t size, pa; };
 static std::vector<Allocation> allocations;
 class IOBufferMemoryDescriptor : public IOMemoryDescriptor {
@@ -95,10 +98,12 @@ public:
         allocations.erase(std::remove_if(allocations.begin(), allocations.end(),
             [this](const Allocation &a) { return a.base == (uintptr_t)data; }), allocations.end());
         std::free(data);
+        OSObject::free();
     }
 };
 class IOGeneralMemoryDescriptor : public IOMemoryDescriptor {
     bool prepared = false;
+    uint64_t leasePA = 0;
 public:
     bool initWithOptions(IOAddressRange *range, unsigned count, unsigned offset,
                          decltype(nullptr), unsigned flags, decltype(nullptr)) {
@@ -112,11 +117,18 @@ public:
             if (range->address >= a.base && range->address - a.base < a.size) {
                 auto off = range->address - a.base;
                 assert(range->length <= a.size - off);
-                pa = a.pa + off + (failSpan ? PAGE_SIZE : 0); size = range->length;
+                leasePA = a.pa + off;
+                pa = leasePA + (failSpan ? PAGE_SIZE : 0); size = range->length;
                 prepared = true; ++preparations; return true;
             }
         }
         assert(false); return false;
     }
-    void free() override { if (prepared) { ++completions; prepared = false; } }
+    void free() override {
+        if (prepared) {
+            checkLeaseDuringTeardown(leasePA, size);
+            ++completions; prepared = false;
+        }
+        OSObject::free();
+    }
 };

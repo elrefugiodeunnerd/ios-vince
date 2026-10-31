@@ -13,7 +13,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="daisy-gpu-pool-", dir="/tmp/opencode") as tmp:
         work = Path(tmp)
         subprocess.run(["git", "init", "-q", str(work)], check=True)
-        for number in ("0181", "0195", "0196", "0197", "0199", "0200", "0201", "0202", "0204"):
+        for number in ("0181", "0195", "0196", "0197", "0199", "0200", "0201", "0202", "0204", "0205"):
             patch, = (ROOT / "xnu/patches").glob(number + "-*.patch")
             subprocess.run(["git", "-C", str(work), "apply",
                             "--include=iokit/Kernel/arm/VinceGPU.cpp", str(patch)], check=True)
