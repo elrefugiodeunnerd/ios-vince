@@ -111,6 +111,7 @@ jobs:
               b'VinceGPU: pool v2: managed WC leases, GEM and IOSurface storage',
               b'SWEET SURF: owned DMA pool surfaces, A506 256-byte BGRA rows',
               b'VinceGPU: surface DMA ', b'daisysurface_dma',
+              b'VinceGPU: GEM pool full; ',
           ):
               if marker not in data:
                   raise SystemExit(f'{kernel}: missing daisy fix marker {marker!r}')

@@ -1,0 +1,33 @@
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+index 8028a95..1af5818 100755
+--- a/iokit/Kernel/arm/VinceGPU.cpp
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -250,7 +250,7 @@ struct gpu_pool_chunk {
+ };
+ static struct gpu_pool_chunk gPool[GPU_POOL_CHUNKS];
+ static IOLock *gPoolLock;
+-static uint32_t gPoolCount, gPoolUsed, gPoolPeak, gPoolMisses;
++static uint32_t gPoolCount, gPoolUsed, gPoolPeak, gPoolMisses, gPoolFallbacks;
+ 
+ static bool
+ gpuPoolPageUsed(uint32_t chunk, uint32_t page)
+@@ -369,7 +369,18 @@ gpuGemAllocate(uint64_t size, uint8_t **kernel, uint64_t *address)
+ 			    largest * (PAGE_SIZE / 1024));
+ 		}
+ 		IOLockUnlock(gPoolLock);
+-		/* A bounded failure, not another multi-second global VM scan. */
++		/* The reserve is full. A small buffer can still come from the ordinary
++		 * contiguous allocator without the multi-second scan a large request
++		 * would cause. Larger requests still fail rather than scan. */
++		if (size <= (1u << 20)) {
++			IOMemoryDescriptor *memory = gpuAllocate(size, kernel, address);
++			if (memory != NULL) {
++				if (gPoolFallbacks++ < 8) {
++					IOLog("VinceGPU: GEM pool full; %llu-byte buffer from ordinary allocator\n", size);
++				}
++				return memory;
++			}
++		}
+ 		return NULL;
+ 	}
+ 	gpuPoolMark(bestChunk, first, pages, true);
