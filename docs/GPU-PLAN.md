@@ -812,3 +812,32 @@ framebuffer-fetch shaders and CoreAnimation uses its own fallback. This
 should restore the 0199 blur and remove the two `0x502` errors. The
 reserve mapping fix and A506 pitch normalization remain in place.
 
+### 0201 hardware result
+
+The 0201 image (`artifacts/daisy-gpu-copy-0201/daisy-boot.img`, kernel
+`3558f5ff...`, image `6db168ba...`) booted with `fastboot boot`. The user
+confirmed the app-switcher blur returned and the missing shadows looked
+better. The console (`artifacts/console-gpu-copy-0201-20261031.log`,
+2,304,951 bytes, SHA-256
+`b010acb99c6663220f95eacc7cb09a48bce24ad6ba1f139f5bd693db317f9c62`)
+shows `VinceGPU: surface DMA off; cached copy path otherwise`, no
+`0x502` errors, and `0 errors` in the frame censuses. Smoothness was
+unchanged, as expected: every frame still reported about 170 ms
+`copying out` (frame 120: 173,978 us; frame 300: 171,382 us).
+
+A second limit appeared after frame 500: with surfaces off, GEM textures
+filled the 256 MiB reserve. `GEM pool exhausted request=32768 used=262128
+KiB ... largest=16 KiB` was followed by 4 KiB failures with `largest=0`,
+then `backboardd` died with `daisy-crash: signal 11 at address 0x1c`.
+Mesa does not handle a NULL GEM allocation. The pool filled because the
+app switcher keeps many full-screen textures alive; this is not a new
+surface leak, but the fixed reserve is too small for that peak.
+
+`0202-daisy-gpu-gem-fallback.patch` lets a buffer of at most 1 MiB come
+from the ordinary contiguous allocator when the reserve is full, instead
+of returning NULL and crashing. Larger requests still fail rather than
+trigger a multi-second global VM scan. The 0202 test uses a 384 MiB
+reserve and keeps `glfetch=0`; a second image enables
+`daisysurface_dma=1` so the shared path can be compared with the same
+fallback in place.
+
