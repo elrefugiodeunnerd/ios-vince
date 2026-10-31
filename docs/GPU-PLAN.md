@@ -1153,3 +1153,34 @@ now requires the v4 marker and a reclaim log. Hardware validation needs the
 next VINCE CI build and a phone boot: `returns` should advance with client
 teardown, but the exhaustion point only moves past the 539-take ceiling if
 userland actually releases its buffers.
+
+### 0205 build and temporary boot
+
+CI [41238531547](https://github.com/proxer05/ios-vince/actions/runs/41238531547)
+passed at `52422d0` in 9m46s, including the pool v4 and reclaim
+linked-kernel checks. Verified artifacts:
+
+- Kernel: `artifacts/kernel-0205/kernel.development.vince`, SHA-256
+  `c3e2ca16d68f7dcb49f89509c301c7fcf2a46e7753e365c63f4f4c15cb5c63bf`.
+- Image: `artifacts/daisy-gpu-reclaim-0205/daisy-boot.img`, 17,979,392
+  bytes, SHA-256
+  `825344be25fcbf5773e236ab416518c104ce8e7b490f452a6e6a75ce40a95b2b`.
+- Packaging helper: `artifacts/build-daisy-0205.py --dma --direct --pool
+  512`; kernel checksum/markers, boot header/digest, appended Daisy DTBs,
+  empty `second`, payload geometry, shim/ADT geometry and the preserved
+  0194 SMP baseline all passed verification.
+
+The arguments match the 0204 direct-target test — `cpus=1`, `adreno=11`,
+GPU memory test, 512 MiB, shared DMA, 650 MHz, `glfetch=0`, `glblit=0` —
+so the reclaim behaviour is comparable boot for boot:
+
+```sh
+fastboot -s 6790a29e0305 boot artifacts/daisy-gpu-reclaim-0205/daisy-boot.img
+```
+
+Look for `VinceGPU: pool v4: reclaim leases after descriptor teardown`,
+`pool reclaimed pages=` entries whose `returns` counter advances with
+client teardown, the memory-test PASS, and whether the
+`GEM pool exhausted` point moves past the previous 539-take ceiling. A
+boot whose workload never releases buffers will still exhaust; that is a
+userland lifetime question, not a reclaim failure.
