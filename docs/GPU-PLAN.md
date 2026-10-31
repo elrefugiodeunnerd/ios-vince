@@ -868,6 +868,23 @@ failure without removing fragmentation. A 1 GiB reserve is inappropriate for
 the current `0x57f00000` (1407 MiB) XNU RAM window; investigate packing and
 small-buffer placement while keeping the 512 MiB test budget.
 
+The user's complete 512 MiB console is already saved as
+`artifacts/console-gpu-shared-0202.log` (492,526 bytes, SHA-256
+`cc2e66a77b6a874ef3d0a00ef21afe33135521e5911d6ef5ac01de0be4593dc8`).
+Its first failure is earlier, after frame 200 at `used=400536 KiB`.
+Frame 200 still draws in place in 26.2 ms; frame 220 copies out in 229.2 ms.
+It reaches frame 1000 with zero logged GL errors or signal crashes, but
+contains 374 failed global contiguous-page scans. The surface allocator's
+large ordinary-allocation retry bypasses the GEM allocator's bounded failure.
+
+`32 MiB - 2 * 11227136 bytes = 10840 KiB` exactly. Chunk-boundary waste is
+therefore a specific explanation for the repeated largest-span value, even
+before accounting for smaller objects. At a fixed 512 MiB budget, 16 x 32 MiB
+chunks can hold 32 such surfaces; 14 x 36 MiB plus an 8 MiB remainder could
+hold 42. This is a packing calculation, not a replay of the mixed workload.
+The next allocator experiment should consider that geometry and suppress the
+large post-reserve VM scans. The 0203 clock build keeps the current allocator.
+
 ### 0203 opt-in 650 MHz clock
 
 `0203-daisy-gpu-650mhz.patch` adds `daisygpu_mhz=650`, requiring full
@@ -918,3 +935,9 @@ These apply the real patch chain and check exact touch/CX packets, shared
 channel lifetime, ACK errors/timeouts, power-before-clock ordering, PLL
 calibration/slew and lock failures, opt-in/handoff rejection and RCG rollback.
 The MMIO peer does not establish hardware clock or voltage behaviour.
+
+0203 CI is [41226126241](https://github.com/proxer05/ios-vince/actions/runs/41226126241)
+at `d55bcec`. Packaging helper: `artifacts/build-daisy-0203.py`; use
+`--dma --pool 512` for the clock test, or `--mhz 100` for a control image.
+Pinned source checksums are in
+`artifacts/daisy-clock-reference/GPU-650-SHA256SUMS`.
