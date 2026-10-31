@@ -22,9 +22,10 @@ on:
       - "tools/patch_dxb.py"
       - ".github/workflows/xnu-vince.yml"
 
-concurrency:
-  group: xnu-${{ github.ref }}
-  cancel-in-progress: true
+# Temporarily disabled while GitHub cancels new runs before a runner is assigned.
+# concurrency:
+#   group: xnu-${{ github.ref }}
+#   cancel-in-progress: true
 
 env:
   DXB_REPO: https://github.com/blacktop/darwin-xnu-build
