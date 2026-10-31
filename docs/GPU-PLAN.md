@@ -1184,3 +1184,47 @@ client teardown, the memory-test PASS, and whether the
 `GEM pool exhausted` point moves past the previous 539-take ceiling. A
 boot whose workload never releases buffers will still exhaust; that is a
 userland lifetime question, not a reclaim failure.
+
+### 0205 hardware result: working reclaims, real direct rendering, one blank first boot
+
+Two temporary boots of the verified 0205 image on 2026-10-31.
+
+The first boot showed a black screen after the single Apple-logo splash.
+Recovered console: `artifacts/console-gpu-reclaim-0205.log`, 137,268 bytes,
+SHA-256 `ae1815da2ee1a0ff2e0067d6ae1994b9b00cdc25d7f44aecdb36314c335d4f03`.
+It records the full 650 MHz startup, pool v4, memory-test PASS and the
+reclaims working immediately (`returns=1..4`, including reclaims between
+fence-4 submission and completion). Three frames rendered directly
+(`0 pictures copied out, 1 drawn in place`, 27-32 us copying out) with one
+`SWEET FB: swap`, then `SWEET FB: display off` and no further display-on
+event; GPU submissions stop with the compositing (the fence-completion log
+is capped at four markers, so no stall can be inferred from fence 5). The
+user's volume-key presses reached HID clients, but no power-key press
+follows the blank: the boot is consistent with the auto-blank never being
+woken, not with a GPU or reclaim fault. The unified log (boot
+`DA58B4B0053043F7A0AFA45B508CBF07`) ends at 57 s while the console
+continues to ~310 s of normal daemon startup; no panic or crash appears.
+
+The second boot is the first fully working direct-rendering boot. User
+report: the screen works, everything renders correctly, and it feels
+smoother. Recovered console:
+`artifacts/console-gpu-reclaim-0205-run2.log`, 228,126 bytes, SHA-256
+`b4a6f6bef5696f049de96759c28dfed67b35ce11c5dc6db8cb05d9b6a6cbc5cb`:
+
+- 55 frame summaries and 16 framebuffer swaps, zero `0x502`/`0x505`/`0x506`
+  GL errors, zero pool exhaustion, zero pool-full fallbacks, no signal
+  crashes, and valid FT5446 contacts (834-1164 valid of ~11.7k reads).
+- Reclaims cover full-size surfaces: `pool reclaimed pages=2741` (a
+  10.7 MiB span) at `returns=3`, plus 4- and 8-page spans; the exhausted
+  0204 state never returned a single lease.
+- Frame cost collapsed versus 0204: frame 240 totals 22,430 us with
+  53 us copying out, frame 260 9,276 us, frame 280 10,445 us, all
+  `1 drawn in place`. In 0204 the same configuration logged
+  `1 picture copied out` at 151-164 ms per frame because DMA allocation
+  failures had pushed surfaces onto the cached copy path; with the reserve
+  reclaiming, surfaces get DMA spans and the direct path actually engages.
+
+Frame summaries are bridge accounting, not a measured panel rate, and this
+capture is not a sustained app-switcher stress test. The next leads are a
+longer stability soak and the user's suggestion to pull fresh changes from
+`oosexgang/hakios-metal` and the rest of that stack.
