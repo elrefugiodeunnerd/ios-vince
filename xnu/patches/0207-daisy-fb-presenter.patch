@@ -1,0 +1,261 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 309288a..075804a 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -50,6 +50,11 @@ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
+ #include <IOKit/system.h>
+ #include <pexpert/pexpert.h>
+ #include <kern/clock.h>
++#include <kern/sched_prim.h>
++#include <kern/thread.h>
++
++extern "C" kern_return_t kernel_thread_start_priority(thread_continue_t continuation, void *parameter,
++    integer_t priority, thread_t *new_thread);
+ #include <sys/proc.h>
+ 
+ enum {
+@@ -79,6 +84,7 @@ enum {
+  * centered 1080x2400 part of it is shown on the 1080x2400 panel.
+  * Boot-arg sweetfb_native=1 presents the real panel size instead.
+  */
++#define SWEET_FB_SETTLE_MS              40      /* fb_filter=2: redraw the last frame bilinear once still */
+ #define SWEET_FB_LOGICAL_W              1125
+ #define SWEET_FB_LOGICAL_H              2436
+ #define SWEET_FB_FORMAT_BGRA            0x42475241
+@@ -131,7 +137,25 @@ public:
+ 	bool          fScaled;
+ 	uint32_t      fShadowW, fShadowH, fOutW, fBarX;
+ 	uint16_t     *fXMap, *fYMap;
++	/*
++	 * The presenter (fb_pri, default 92): the panel copies leave the vsync workloop, at a priority that keeps
++	 * the processors under the window server's real-time threads (hakios cd8fdbb). fb_filter: 0 nearest only,
++	 * 1 always bilinear, 2 (the default) nearest while frames come and one bilinear redraw of the last frame
++	 * once none has come for SWEET_FB_SETTLE_MS.
++	 */
++	IOLock       *fPresentLock;     /* the presenter's pending work */
++	IOLock       *fPanelLock;       /* serializes the panel memory writers */
++	bool          fWork;
++	uint8_t       fWorkRec[SWEET_FB_SWAP_REC_SIZE];
++	uint8_t       fLastRec[SWEET_FB_SWAP_REC_SIZE];    /* for the settle redraw */
++	bool          fSettling;        /* the panel shows a nearest-drawn frame */
++	uint32_t      fFilter;          /* fb_filter */
++	thread_t      fPresenter;
+ 	void flushPanel(void);
++	void flushPanelBilinear(void);
++	void drawFrame(const uint8_t *rec, bool bilinear);
++	void presenter(void);
++	static void presenterMain(void *self, wait_result_t result);
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	void addClient(IOMobileFramebufferUserClient *client);
+@@ -316,6 +340,34 @@ AppleCLCD::start(IOService *provider)
+ 			    caHz, interval, ticks);
+ 		}
+ 	}
++	fPresentLock = IOLockAlloc();
++	fPanelLock = IOLockAlloc();
++	if (fPresentLock == NULL || fPanelLock == NULL) {
++		IOLog("SWEET FB: no presenter locks\n");
++		if (fPresentLock != NULL) { IOLockFree(fPresentLock); fPresentLock = NULL; }
++		if (fPanelLock != NULL) { IOLockFree(fPanelLock); fPanelLock = NULL; }
++		return false;
++	}
++	uint32_t filter = 2, pri = 92;
++	PE_parse_boot_argn("fb_filter", &filter, sizeof(filter));
++	PE_parse_boot_argn("fb_pri", &pri, sizeof(pri));
++	fFilter = filter > 2 ? 2 : filter;
++	/*
++	 * The presenter thread (hakios cd8fdbb): the panel copies leave the vsync workloop so a slow flush cannot
++	 * delay the vsync notifications, at fb_pri (92, BASEPRI_PREEMPT) so the window server's real-time threads do
++	 * not take the processor mid-flush and stretch one frame in ten (3.6 ms into 10.9 ms on the reference phone;
++	 * nearest 1.9 ms against bilinear 3.6 ms, with the settle redraw keeping what stands still smooth).
++	 */
++	if (pri >= 1 && pri <= 95) {
++		if (kernel_thread_start_priority(&AppleCLCD::presenterMain, this, (integer_t)pri, &fPresenter) != KERN_SUCCESS) {
++			IOLog("SWEET FB: no presenter thread\n");
++			return false;
++		}
++	} else if (kernel_thread_start(&AppleCLCD::presenterMain, this, &fPresenter) != KERN_SUCCESS) {
++		IOLog("SWEET FB: no presenter thread\n");
++		return false;
++	}
++	IOLog("SWEET FB: presenter: fb_pri=%u fb_filter=%u\n", pri, fFilter);
+ 	registerService();
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u, panel %u bpp\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH, fPanelBpp * 8);
+@@ -433,8 +485,20 @@ AppleCLCD::swap(const uint8_t *rec)
+ 	}
+ }
+ 
++/* The vsync timer hands the latest swap to the presenter thread. */
+ void
+ AppleCLCD::present(const uint8_t *rec)
++{
++	IOLockLock(fPresentLock);
++	memcpy(fWorkRec, rec, SWEET_FB_SWAP_REC_SIZE);
++	fWork = true;
++	IOLockUnlock(fPresentLock);
++	IOLockWakeup(fPresentLock, &fWork, true);
++}
++
++/* Draw one frame's layers into the shadow and put it on the panel. */
++void
++AppleCLCD::drawFrame(const uint8_t *rec, bool bilinear)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
+ 
+@@ -535,11 +599,70 @@ AppleCLCD::present(const uint8_t *rec)
+ 	}
+ #if defined(ARM64_BOARD_CONFIG_VINCE)
+ 	if (fPanelBpp == 3) {
+-		flushPanel();
++		if (bilinear) {
++			flushPanelBilinear();
++		} else {
++			flushPanel();
++		}
+ 	}
++#else
++	(void)bilinear;
+ #endif
+ }
+ 
++/*
++ * The presenter (hakios cd8fdbb): draw the latest swap at fb_pri; when fb_filter=2 and no frame has come for
++ * SWEET_FB_SETTLE_MS, draw the last one again bilinear. Nearest hides the dropped columns and rows while the
++ * picture moves; what stands still on the panel is the filtered one.
++ */
++void
++AppleCLCD::presenterMain(void *self, wait_result_t result)
++{
++	(void)result;
++	((AppleCLCD *)self)->presenter();
++	thread_terminate(current_thread());
++}
++
++void
++AppleCLCD::presenter(void)
++{
++	static uint32_t settled;
++	uint8_t rec[SWEET_FB_SWAP_REC_SIZE];
++
++	for (;;) {
++		bool redraw = false;
++		IOLockLock(fPresentLock);
++		while (!fWork) {
++			if (fSettling) {
++				uint64_t deadline;
++				clock_interval_to_deadline(SWEET_FB_SETTLE_MS, NSEC_PER_MSEC, &deadline);
++				if (IOLockSleepDeadline(fPresentLock, &fWork, deadline, THREAD_UNINT) == THREAD_TIMED_OUT && !fWork) {
++					redraw = true;
++					break;
++				}
++				continue;
++			}
++			IOLockSleep(fPresentLock, &fWork, THREAD_UNINT);
++		}
++		if (redraw) {
++			fSettling = false;
++			IOLockUnlock(fPresentLock);
++			memcpy(rec, fLastRec, SWEET_FB_SWAP_REC_SIZE);
++			if (settled++ < 4) {
++				IOLog("SWEET FB: settled redraw %u\n", settled);
++			}
++			drawFrame(rec, true);
++			continue;
++		}
++		memcpy(rec, fWorkRec, SWEET_FB_SWAP_REC_SIZE);
++		memcpy(fLastRec, rec, SWEET_FB_SWAP_REC_SIZE);
++		fWork = false;
++		IOLockUnlock(fPresentLock);
++		drawFrame(rec, fFilter == 1);
++		fSettling = fFilter == 2;
++	}
++}
++
+ #if defined(ARM64_BOARD_CONFIG_VINCE)
+ /*
+  * 32-bpp shadow (B, G, R, X) to the 24-bpp panel (B, G, R): four pixels into three words, the whole frame
+@@ -548,6 +671,7 @@ AppleCLCD::present(const uint8_t *rec)
+ void
+ AppleCLCD::flushPanel(void)
+ {
++	IOLockLock(fPanelLock);
+ 	if (fScaled) {
+ 		/* nearest sample of the logical display per panel pixel; bars rewritten each time (240 bytes a row) */
+ 		uint32_t barBytes = fBarX * 3, endBytes = (fBarX + fOutW) * 3;
+@@ -570,6 +694,7 @@ AppleCLCD::flushPanel(void)
+ 				d[2] = p2 >> 16 | p3 << 8;
+ 			}
+ 		}
++		IOLockUnlock(fPanelLock);
+ 		return;
+ 	}
+ 	for (uint32_t y = 0; y < fHeight; y++) {
+@@ -589,7 +714,66 @@ AppleCLCD::flushPanel(void)
+ 			*db++ = (uint8_t)(*s >> 16);
+ 		}
+ 	}
++	IOLockUnlock(fPanelLock);
++}
++
++/* One 24-bit pixel between two others, f of the way (0..65535) from a to b. */
++static inline uint32_t
++fb_mix24(uint32_t a, uint32_t b, uint32_t f)
++{
++	uint32_t out = 0;
++	for (unsigned shift = 0; shift < 24; shift += 8) {
++		uint32_t ca = (a >> shift) & 0xff, cb = (b >> shift) & 0xff;
++		out |= ((ca * (65536 - f) + cb * f + 32768) >> 16) << shift;
++	}
++	return out;
++}
++
++/*
++ * The settle redraw (fb_filter=2): the same picture through a bilinear filter, on the presenter thread while
++ * nothing new arrives. The bars stay black; the four pixels around each panel pixel's centre are blended in
++ * both axes and packed as the nearest path packs them.
++ */
++void
++AppleCLCD::flushPanelBilinear(void)
++{
++	if (!fScaled) {
++		flushPanel();           /* no scaling: the nearest sample is the picture */
++		return;
++	}
++	IOLockLock(fPanelLock);
++	uint32_t barBytes = fBarX * 3, endBytes = (fBarX + fOutW) * 3;
++	for (uint32_t y = 0; y < fHeight; y++) {
++		volatile uint32_t *row = (volatile uint32_t *)(fPanel + (uint64_t)y * fPanelRowBytes);
++		uint32_t i;
++		for (i = 0; i < barBytes / 4; i++) {
++			row[i] = 0;
++		}
++		for (i = endBytes / 4; i < fWidth * 3 / 4; i++) {
++			row[i] = 0;
++		}
++		volatile uint32_t *d = row + barBytes / 4;
++		uint32_t syF = (uint32_t)(((2ull * y + 1) * fShadowH << 15) / fHeight);
++		uint32_t y0 = syF >> 16, fy = syF & 0xffff;
++		uint32_t y1 = y0 + 1 < fShadowH ? y0 + 1 : y0;
++		const uint32_t *rowA = (const uint32_t *)(fPixels + (uint64_t)y0 * fRowBytes);
++		const uint32_t *rowB = (const uint32_t *)(fPixels + (uint64_t)y1 * fRowBytes);
++		for (uint32_t x = 0; x + 4 <= fOutW; x += 4, d += 3) {
++			uint32_t p[4];
++			for (unsigned k = 0; k < 4; k++) {
++				uint32_t sxF = (uint32_t)(((2ull * (x + k) + 1) * fShadowW << 15) / fOutW);
++				uint32_t x0 = sxF >> 16, fx = sxF & 0xffff;
++				uint32_t x1 = x0 + 1 < fShadowW ? x0 + 1 : x0;
++				p[k] = fb_mix24(fb_mix24(rowA[x0], rowA[x1], fx), fb_mix24(rowB[x0], rowB[x1], fx), fy);
++			}
++			d[0] = p[0] | p[1] << 24;
++			d[1] = p[1] >> 8 | p[2] << 16;
++			d[2] = p[2] >> 16 | p[3] << 8;
++		}
++	}
++	IOLockUnlock(fPanelLock);
+ }
++
+ #endif
+ 
+ bool
