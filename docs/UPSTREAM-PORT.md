@@ -42,3 +42,33 @@ Three classes:
 | (remaining 208 commits) | — | queued; see the inventory. |
 
 Boot-tested artifacts for this port so far: kernel `artifacts/kernel-0206/kernel.development.vince` (SHA-256 `4281d20fbb9a6393444f1f30bf884b2f6ef4cd7be25d4cd64e3d9c401c77303a`, CI 41245847218 at `08a1b91`) packaged with the proven 0205 reclaim arguments as `artifacts/daisy-gpu-refresh-0206/daisy-boot.img` (17,979,392 bytes, SHA-256 `a659c2305d56196cc6a729449cdfcf0d807706079a81c0de7343d850d689186f`); the rebuilt userdata root with the macos-15 gpu-stack is `/hdd/ios-daisy-root/ios16-root-20H392.simg` (SHA-256 `b625a367c25b93fefa1cf3aefb8fa93eb66e6e2992c389ee5a0935d7e779dc84`).
+
+
+## 0206 hardware result — 2026-11-01
+
+First boot of the 0206 kernel with the rebuilt userdata root (macos-15
+gpu-stack). User report: blur renders correctly, but app icons and their
+shadows are not visible in the all-apps view. Console:
+`artifacts/console-gpu-refresh-0206.log`, 383,261 bytes, SHA-256
+`da1f148b8cb009c752031ab9fef9536545ce8b6699a6aaf9a907825a9910c22a`;
+unified log boot `049D9BFC159E4E4CBEA50913D912FDB8` (158,893 messages,
+zero unresolved).
+
+- The new pacing property works on hardware: `SWEET FB: IOMFBDisplayRefresh:
+  60 Hz, an interval of 71582788 (2^-32 s), 319999 ticks`, and backboardd
+  reads it (`getbin AppleCLCD.IOMFBDisplayRefresh -> found`).
+- The 0205 successes repeat: 66 frame summaries, 16 swaps, zero GL errors,
+  zero pool exhaustion, reclaims advancing, no crashes.
+- The new refusal diagnostics identify the icon path exactly: the icon-sized
+  BGRA surfaces (`wrap sel 6 id 5 194x237 fmt BGRA bpr 776 size 183912
+  delta 0 ro 1`) are wrapped client pictures, read-only and therefore
+  ineligible for GPU import, so `surface_shared()` refuses them with
+  `(the library refused)` and CA takes the copy path; the glyph masks
+  (`A008`, `LA08`) and gradients (`RGhA`) are refused as not-BGRA as the
+  reference phone also saw.
+- The copy path renders these wrapped pictures without errors yet the icons
+  and shadows do not appear: this is the known A5xx framebuffer-fetch effect
+  family (CA's private icon/shadow shaders), which Mesa enables only on A6xx.
+  Upstream solves it natively in its driver (`abd24c1` framebuffer fetch,
+  `7a329d8` CoreAnimation's widget passes) — part of the queued 190-commit
+  driver rework.
