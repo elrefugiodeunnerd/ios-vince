@@ -167,3 +167,49 @@ The port touches only new files (`a5xx.hpp`, `compute5.hpp`,
 `tools/check-a5xx.py`, `tools/gen-a5xx.py`, `tests/compute5_test.cpp`), so
 rebases should stay conflict-free until the port starts modifying upstream
 sources (the fake GPU checks, the transport).
+
+
+### oosexgang survey — the missing parts found, 2026-11-01
+
+All seven repositories checked. The findings, most important first:
+
+1. **The AIR front end was never a private fork**: `hakios-xnu-kernel`
+   carries it at `tools/mesa/air/` (air2nir, air_to_nir and friends) plus
+   `tools/mesa/air-frontend.patch` and `air-ir3.patch`, which build it into
+   stock Mesa 25.0.7 — both patches apply cleanly to the tree already
+   staged under `artifacts/upstream/mesa-src/`. `tools/air/mk-host.sh` is
+   the complete host recipe (it fetches the pinned tarball, applies the
+   patches, works around the glibc 2.43 `<threads.h>` clash, and builds
+   `air2nir`, `ir3_compiler` and `air_run`); it ran unmodified on this
+   machine, producing the build at
+   `hakios-xnu-kernel/build/mesa-host/build/`.
+2. **The full hakios-metal test suite now passes WITH the compiler**:
+   `make test MESA=1` against that build — 268 tests, 0 failed checks,
+   including the fixture comparisons that compile `tools/kernels/*.ll`
+   on this machine. The one host wrinkle: the AIR reader reads LLVM 14/15
+   bitcode, and this machine's `llvm-as` is 23 — `tools/llvm-as-15.py`
+   (llvmlite) builds the fixtures, wired in with `LLVM_AS=`. The compiler
+   blocker is closed; the phone's in-process compilation of Apple's own
+   `.metallib` shaders is now a build flag, not a missing piece.
+3. **The device-repository architecture**: `hakios-sm7325` is the template
+   — device.conf, configs/, its UEFI platform, firmware-pull scripts, and
+   the SoC layer. The README says plainly: a port to another Qualcomm phone
+   is another directory like it. A `hakios-msm8953` device repo is how a
+   Daisy port would be carried upstream-shaped, if wanted.
+4. **The UEFI boot path**: `hakios-uefi` (a Mu-Silicium port) plus each
+   device's `uefi/` platform and prebuilt `BootShim.bin` — upstream's newer
+   boot path. Daisy still boots through the Android shim; this is a future
+   consideration, not a gap.
+5. `hackios-xnu-userland` is a pointer to the kernel repo (userland moved
+   into it — our port base is correct); `hackios-web` is documentation;
+   `hakios-mt6768` is a MediaTek/Mali port, not Adreno.
+6. **Kernel drift**: `hakios-xnu-kernel` main is `5c819b8` (HakiosMetalCA:
+   the window server's compiled stages cached in /var/tmp) — 31 commits
+   past the old pin, and the metal repo a few past the branch base too.
+   The next sync picks those up by the documented rebase procedure.
+
+The toolchain state on this machine: the Mesa+AIR host build lives at
+`hakios-xnu-kernel/build/mesa-host/` (meson in `~/.local/bin`, mako/pyyaml
+in `~/.local`), and `hakios-metal` tests pass against it with
+`make test MESA=1 MESA_SRC=... MESA_BUILD=... LLVM_AS='python3
+tools/llvm-as-15.py'`.
