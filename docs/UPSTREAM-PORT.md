@@ -89,3 +89,31 @@ the boot image is `artifacts/daisy-gpu-presenter-0207b/daisy-boot.img`
 (17,981,440 bytes, SHA-256
 `ac6a13ea99222ae221d288a00d75736149744b0c553fc24a65c499f45e30c4be`).
 Hardware validation pending.
+
+
+### 0207 hardware result — 2026-11-01
+
+The corrected 0207 kernel ran a ~23-minute interactive session (touch log
+`ms1398169`, 17,627 valid FT5446 contacts, 4 display on/off cycles) with no
+panic, no crash and no pool exhaustion. Console:
+`artifacts/console-gpu-presenter-0207.log`, 679,771 bytes, SHA-256
+`fcc48707298d5f2164a29aba790d91b2422c1d5d6d54a96dd7344dbc93a02e29`;
+unified log boots `4BBFB2E56CFC4DA8960DD08F8232F8A7` (102,779 messages) and
+the earlier failed attempt's `049D9BFC159E4E4CBEA50913D912FDB8`.
+
+- The presenter works: `SWEET FB: presenter: fb_pri=92 fb_filter=2`, and the
+  settle redraw fired (`SWEET FB: settled redraw 1..4`, log capped at four)
+  when the screen stood still.
+- 325 frame summaries over 7,280 frames. Copy-out is solved: average 38 us,
+  maximum 57 us (0204: 151-164 ms), `0 pictures copied out, 1 drawn in
+  place` throughout, and the bridge's whole-session census reports 0 errors
+  with 1,971 IOSurfaces as texture memory against 73 copies.
+- 59 of the 325 summaries show 138-263 ms frames whose time is almost all
+  `waiting` (CA/GPU), not copying: the remaining smoothness gap is in the
+  render-and-present pipeline, consistent with the wrapped icons/shadows
+  finding and the queued driver rework.
+- 650 MHz and the memory test passed as before; `IOMFBDisplayRefresh` read
+  by backboardd; reclaims advancing; zero GL errors.
+
+The port stands at 3 of 210 upstream commits hardware-validated (0206
+kernel, 0207 kernel, eagl diagnostics in the root).
