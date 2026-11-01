@@ -151,3 +151,19 @@ under `make test`, then the IOKit transport onto VinceGPU and `render5.hpp`'s
 sysmem draw. The in-process compiler still needs the AIR front-end Mesa
 fork (vcvkk's `darwin-redwood-air` tree, not yet public); everything above
 builds without it.
+
+
+Merging future upstream changes: the fork's `main` mirrors
+oosexgang/hakios-metal's, and the port commits sit on top of its newest
+head, so an update is
+
+```sh
+cd /hdd/ios-daisy/artifacts/upstream/hakios-metal
+git fetch origin && git rebase origin/main a5xx-port
+git push --force-with-lease fork a5xx-port && git push fork origin/main:main
+```
+
+The port touches only new files (`a5xx.hpp`, `compute5.hpp`,
+`tools/check-a5xx.py`, `tools/gen-a5xx.py`, `tests/compute5_test.cpp`), so
+rebases should stay conflict-free until the port starts modifying upstream
+sources (the fake GPU checks, the transport).
