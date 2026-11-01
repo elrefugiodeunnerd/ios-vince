@@ -122,3 +122,32 @@ kernel, 0207 kernel, eagl diagnostics in the root).
 
 
 The 0208/0209 kernel is CI 41349288174 (kernel SHA-256 `484522b9c2388dcc230b0fc5831f3f0c489720210a90af9201c5c2ab4d8e6529`), packaged as `artifacts/daisy-gpu-taps-0208/daisy-boot.img` (17,981,440 bytes, SHA-256 `18f993e13cd68798e6a63e951e243d3c3dc46ce8845145da534ee7c33365996d`) with the proven arguments; `press_power` and `surf_wrap` stay off unless their boot args are given. The caenv switch is in the deployed gpu-stack source (rebuilt on the next gpu-userland artifact).
+
+
+### Driver port state — the a5xx-port branch, 2026-11-01
+
+The driver port lives on the `a5xx-port` branch of
+[proxer05/hakios-metal](https://github.com/proxer05/hakios-metal) (forked
+from oosexgang's; the clone is
+`artifacts/upstream/hakios-metal`, Mesa source at
+`artifacts/upstream/mesa-src/mesa-25.0.7`). Seven commits so far:
+
+- `a5xx.hpp`: every register Mesa's fd5 driver references for compute and
+  draw on the Adreno 506 — 157 registers, 4 rnndb arrays, and the
+  array-nested registers under their generated names (161 machine-checked
+  constants), gathered mechanically from the fd5 sources and verified
+  against Mesa 25.0.7's `a5xx.xml` by `tools/check-a5xx.py` (0 failures).
+- `compute5.hpp` + `tests/compute5_test.cpp`: the fd5 launch-grid sequence
+  as encoders (thread size, footprints, branchstack, constlen/instrlen,
+  regids, NDRANGE, CP_EXEC_CS opcode 0x33). The host test decodes every
+  packet header with pm4.hpp's reader and holds every value to fd5-derived
+  literals: PASS, 40 words. The XML corrected three assumptions on the way
+  (the SP_CS_CTRL bitfield layout, TWO_QUADS = 0, the a5xx CP_EXEC_CS
+  opcode), which is the discipline working as intended.
+
+Both tools read their paths from the tree; `tools/gen-a5xx.py` regenerates
+the header from the fd5 sources. Next: the fake GPU's A5xx dispatch checks
+under `make test`, then the IOKit transport onto VinceGPU and `render5.hpp`'s
+sysmem draw. The in-process compiler still needs the AIR front-end Mesa
+fork (vcvkk's `darwin-redwood-air` tree, not yet public); everything above
+builds without it.
