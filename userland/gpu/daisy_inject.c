@@ -225,6 +225,39 @@ find_gpu_service(void)
 	return 0;
 }
 
+/*
+ * Boot-arg caenv=NAME=VALUE: CoreAnimation's switches set in this process before QuartzCore reads them (hakios
+ * ee84bd5d/a5620ff). A fraction is written 0p25: the boot arguments lose what follows a "." of a number.
+ */
+static void
+caenv(char *args)
+{
+	for (char *a = args; (a = strstr(a, " caenv=")) != NULL; a += 6) {
+		char setting[128];
+		size_t len = strcspn(a + 6, " ");
+		char *equals;
+
+		if (len == 0 || len >= sizeof(setting)) {
+			continue;
+		}
+		memcpy(setting, a + 6, len);
+		setting[len] = 0;
+		if ((equals = strchr(setting, '=')) == NULL) {
+			continue;
+		}
+		*equals = 0;
+		for (char *dot = equals + 1; *dot != 0; dot++) {
+			if (*dot == 'p' && dot > equals + 1 && dot[-1] >= '0' && dot[-1] <= '9' &&
+			    dot[1] >= '0' && dot[1] <= '9') {
+				*dot = '.';
+				break;
+			}
+		}
+		setenv(setting, equals + 1, 1);
+		syslog(LOG_NOTICE, "daisy: caenv: %s=%s for the window server", setting, equals + 1);
+	}
+}
+
 __attribute__((constructor))
 static void
 daisy_inject(void)
@@ -235,6 +268,7 @@ daisy_inject(void)
 	const char *gl_path = NULL;
 	io_service_t gpu = 0;
 	void *lib;
+	int have_args;
 
 	if (name != NULL && strncmp(name, "containermanagerd", 17) == 0) {
 		container_manager_fixes();
@@ -250,7 +284,11 @@ daisy_inject(void)
 	if (name == NULL || strcmp(name, "backboardd") != 0 || gl_path == NULL) {
 		return;
 	}
-	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0 && strstr(args, " gl=0") != NULL) {
+	have_args = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0;
+	if (have_args) {
+		caenv(args);
+	}
+	if (have_args && strstr(args, " gl=0") != NULL) {
 		syslog(LOG_NOTICE, "daisy: gl=0: CoreAnimation keeps its software renderer");
 		return;
 	}

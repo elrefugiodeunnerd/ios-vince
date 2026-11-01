@@ -1,5 +1,5 @@
 diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
-index 0efb801..96e2e60 100644
+index 0efb801..dd77041 100644
 --- a/bsd/dev/vince_input.c
 +++ b/bsd/dev/vince_input.c
 @@ -46,6 +46,7 @@
@@ -10,10 +10,10 @@ index 0efb801..96e2e60 100644
  #include <kern/sched_prim.h>
  #include <machine/machine_routines.h>
  #include <pexpert/pexpert.h>
-@@ -1463,8 +1464,59 @@ out:
+@@ -1462,9 +1463,60 @@ out:
+ 	thread_block(THREAD_CONTINUE_NULL);
  }
  
- void
 +/*
 + * boot-arg press_power=<seconds>: a short power-key press that many seconds after boot and another ten seconds
 + * later (the lock and the wake, with nobody at the phone; hakios b8d4748). press_power_ms=<ms> is how long each
@@ -64,6 +64,7 @@ index 0efb801..96e2e60 100644
 +	printf("VINCE INPUT: press_power: key 0 held %u ms at %u s and %u s\n", press_ms, seconds, seconds + 10);
 +}
 +
+ void
  vince_input_start(void)
  {
 +	press_power_init();
