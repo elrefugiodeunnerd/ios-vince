@@ -73,3 +73,19 @@ zero unresolved).
   Upstream solves it natively in its driver (`abd24c1` framebuffer fetch,
   `7a329d8` CoreAnimation's widget passes) — part of the queued 190-commit
   driver rework.
+
+
+### 0207 early panic and fix — 2026-11-01
+
+The first 0207 build panicked a few frames into boot: `EARLY PANIC: Mutex
+... is unexpectedly owned by thread ... @lock_mtx.c:175`. The presenter
+serialization in `flushPanel()` only unlocked `fPanelLock` on the
+non-scaled tail; the scaled path (the one this panel always takes) returned
+with the mutex held, so the second flush tried to acquire a mutex its own
+thread still owned. Fixed by unlocking before the scaled path's return;
+the corrected kernel is CI 41255338497 at `8ba2286` (kernel SHA-256
+`185cd179a30230cd59df6ffbd3327d3d27f5b57260eb7280cdeaf16127bbfd4a`), and
+the boot image is `artifacts/daisy-gpu-presenter-0207b/daisy-boot.img`
+(17,981,440 bytes, SHA-256
+`ac6a13ea99222ae221d288a00d75736149744b0c553fc24a65c499f45e30c4be`).
+Hardware validation pending.
