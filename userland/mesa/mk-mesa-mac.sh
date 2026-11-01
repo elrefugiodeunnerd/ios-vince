@@ -22,6 +22,7 @@ if [ ! -d mesa-$VERSION ] || [ "$(cat mesa-$VERSION/.redwood-patches 2>/dev/null
 fi
 rm -rf mesa-$VERSION/src/redwood-drm
 cp -r "$ROOT/redwood-drm" mesa-$VERSION/src/redwood-drm
+ln -sfn "$ROOT/air" mesa-$VERSION/src/compiler/air
 if [ ! -x venv/bin/python3 ]; then
 	python3 -m venv venv
 	venv/bin/pip -q install mako pyyaml packaging
@@ -58,6 +59,7 @@ BUILD=build-${DRIVERS//,/-}
 	-Dlibunwind=disabled -Dglvnd=disabled -Dvideo-codecs= -Dtools= -Dgallium-vdpau=disabled -Dgallium-va=disabled \
 	-Dgallium-xa=disabled -Dlmsensors=disabled -Dbuild-tests=false > meson-setup.log
 ninja -C $BUILD > ninja.log
+ninja -C $BUILD src/compiler/air/libair.a > air.log
 mkdir -p out
 $(xcrun -f strip) -x -o out/libOSMesa.8.dylib $BUILD/src/gallium/targets/osmesa/libOSMesa.8.dylib
 install_name_tool -id "$PREFIX/lib/libOSMesa.8.dylib" out/libOSMesa.8.dylib

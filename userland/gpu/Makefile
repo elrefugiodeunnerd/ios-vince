@@ -47,6 +47,16 @@ $(OUT)/cputop: cputop.c | $(OUT)
 	$(CC) $(CFLAGS) -o $@ $<
 	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
 
+# The a5xx Metal smoke test, injected into backboardd by metalsmoke=1: a fill_id
+# dispatch compiled by the phone's own AIR front end over the a5xx port of
+# hakios-metal (HAKIOS_METAL_OUT points at its `make ios MESA=1` output).
+HAKIOS_METAL_OUT ?= ../../../hakios-metal/out/ios
+$(OUT)/libmetal-smoke.dylib: metal_smoke.cpp metal_smoke_fill_id_bc.h $(HAKIOS_METAL_OUT)/libhakios-metal.a | $(OUT)
+	$(CC) $(CFLAGS) -dynamiclib -install_name $(LIBDIR)/libmetal-smoke.dylib \
+		-I$(HAKIOS_METAL_OUT)/../../include -o $@ metal_smoke.cpp $(HAKIOS_METAL_OUT)/libhakios-metal.a \
+		-lc++ -framework IOKit -framework IOSurface
+	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
+
 $(OUT)/libtopaz-inject.dylib: topaz_inject.c | $(OUT)
 	$(CC) $(CFLAGS) -dynamiclib -install_name /topaz/lib/libtopaz-inject.dylib \
 		-framework CoreFoundation -framework IOKit -o $@ $<

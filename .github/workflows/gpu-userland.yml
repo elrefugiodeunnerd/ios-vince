@@ -58,6 +58,15 @@ jobs:
           make out/bbd_wrap out/libdaisy-inject.dylib CC="$CC"
           make out/libtopaz-inject.dylib CC="$CC"
 
+      - name: Build the a5xx Metal stack (hakios-metal a5xx-port, with the phone's own compiler)
+        run: |
+          set -e
+          git clone --depth 1 -b a5xx-port https://github.com/proxer05/hakios-metal /tmp/hakios-metal
+          cd /tmp/hakios-metal
+          IOS_MESA_ROOT="$GITHUB_WORKSPACE/userland/mesa/build-mesa" make ios MESA=1
+          cd "$GITHUB_WORKSPACE/userland/gpu"
+          make out/libmetal-smoke.dylib CC="$(xcrun --sdk iphoneos -f clang)" HAKIOS_METAL_OUT=/tmp/hakios-metal/out/ios
+
       - name: Sign and stage
         run: |
           set -e
@@ -68,6 +77,8 @@ jobs:
           cp userland/gpu/out/libdaisy-gl.dylib out/gpu/
           cp userland/gpu/out/libdaisy-inject.dylib out/gpu/
           cp userland/gpu/out/libtopaz-inject.dylib out/gpu/
+          cp /tmp/hakios-metal/out/ios/libhakios-metal.a out/gpu/
+          cp userland/gpu/out/libmetal-smoke.dylib out/gpu/
           cp userland/gpu/out/bbd_wrap out/gpu/
           cp userland/gpu/eagl_gen.h out/gpu/
           (cd out/gpu && shasum -a 256 * > SHA256SUMS)

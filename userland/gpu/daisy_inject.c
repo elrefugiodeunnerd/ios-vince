@@ -287,6 +287,11 @@ daisy_inject(void)
 	have_args = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0;
 	if (have_args) {
 		caenv(args);
+		if (strstr(args, " metalsmoke=1") != NULL) {
+			// the a5xx Metal smoke test, in this process (metal_smoke.cpp; its constructor runs here)
+			void *smoke = dlopen("/daisy/lib/libmetal-smoke.dylib", RTLD_NOW);
+			fprintf(stderr, "daisy: metal smoke %s: %s\n", smoke ? "loaded" : "not loaded", smoke ? "ok" : dlerror());
+		}
 	}
 	if (have_args && strstr(args, " gl=0") != NULL) {
 		syslog(LOG_NOTICE, "daisy: gl=0: CoreAnimation keeps its software renderer");
