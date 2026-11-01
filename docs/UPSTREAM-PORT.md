@@ -119,3 +119,6 @@ the earlier failed attempt's `049D9BFC159E4E4CBEA50913D912FDB8`.
 
 The port stands at 3 of 210 upstream commits hardware-validated (0206
 kernel, 0207 kernel, eagl diagnostics in the root).
+
+
+The 0208/0209 kernel is CI 41349288174 (kernel SHA-256 `484522b9c2388dcc230b0fc5831f3f0c489720210a90af9201c5c2ab4d8e6529`), packaged as `artifacts/daisy-gpu-taps-0208/daisy-boot.img` (17,981,440 bytes, SHA-256 `18f993e13cd68798e6a63e951e243d3c3dc46ce8845145da534ee7c33365996d`) with the proven arguments; `press_power` and `surf_wrap` stay off unless their boot args are given. The caenv switch is in the deployed gpu-stack source (rebuilt on the next gpu-userland artifact).
