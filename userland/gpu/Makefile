@@ -21,7 +21,7 @@ ENTITLEMENTS ?= ../ent.plist
 
 OUT ?= out
 
-ALL_TARGETS = $(OUT)/bbd_wrap $(OUT)/libdaisy-inject.dylib
+ALL_TARGETS = $(OUT)/bbd_wrap $(OUT)/libdaisy-inject.dylib $(OUT)/fps_info $(OUT)/cputop
 
 all: $(ALL_TARGETS)
 
@@ -35,6 +35,16 @@ $(OUT)/bbd_wrap: bbd_wrap.c | $(OUT)
 $(OUT)/libdaisy-inject.dylib: daisy_inject.c | $(OUT)
 	$(CC) $(CFLAGS) -dynamiclib -install_name $(LIBDIR)/libdaisy-inject.dylib \
 		-framework CoreFoundation -framework IOKit -o $@ $<
+	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
+
+# fps_info and cputop: what CoreAnimation and UIKit believe about the frame rate, and which
+# processes take the processors (ported from hakios-xnu-kernel cd72b54 / 3aef7e3).
+$(OUT)/fps_info: fps_info.m | $(OUT)
+	$(CC) $(CFLAGS) -fobjc-arc -framework Foundation -framework QuartzCore -o $@ $<
+	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
+
+$(OUT)/cputop: cputop.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $<
 	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
 
 $(OUT)/libtopaz-inject.dylib: topaz_inject.c | $(OUT)
