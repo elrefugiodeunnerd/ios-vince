@@ -1,0 +1,72 @@
+diff --git a/bsd/dev/vince_input.c b/bsd/dev/vince_input.c
+index 0efb801..96e2e60 100644
+--- a/bsd/dev/vince_input.c
++++ b/bsd/dev/vince_input.c
+@@ -46,6 +46,7 @@
+ #include <sys/systm.h>
+ #include <kern/clock.h>
+ #include <kern/thread.h>
++#include <kern/thread_call.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
+@@ -1463,8 +1464,59 @@ out:
+ }
+ 
+ void
++/*
++ * boot-arg press_power=<seconds>: a short power-key press that many seconds after boot and another ten seconds
++ * later (the lock and the wake, with nobody at the phone; hakios b8d4748). press_power_ms=<ms> is how long each
++ * press is held (default 150, a tap). The press goes out as the key's own do; the poll thread sees no change
++ * while the physical key rests, so the two do not fight.
++ */
++static uint32_t press_ms = 150, press_left;
++static thread_call_t press_call;
++
++static void
++press_step(void *p0, void *p1)
++{
++	static bool down;
++	uint64_t deadline;
++
++	(void)p0;
++	(void)p1;
++	down = !down;
++	printf("VINCE INPUT: key 0 %s (press_power)\n", down ? "down" : "up");
++	sweet_hid_key(0, down ? 1 : 0);
++	if (down) {
++		clock_interval_to_deadline((int)press_ms, NSEC_PER_MSEC, &deadline);
++	} else if (--press_left > 0) {
++		clock_interval_to_deadline(10, NSEC_PER_SEC, &deadline);
++	} else {
++		return;
++	}
++	thread_call_enter_delayed(press_call, deadline);
++}
++
++static void
++press_power_init(void)
++{
++	uint32_t seconds = 0;
++	uint64_t deadline;
++
++	if (!PE_parse_boot_argn("press_power", &seconds, sizeof(seconds)) || seconds == 0) {
++		return;
++	}
++	PE_parse_boot_argn("press_power_ms", &press_ms, sizeof(press_ms));
++	press_left = 2;
++	press_call = thread_call_allocate(press_step, NULL);
++	if (press_call == NULL) {
++		return;
++	}
++	clock_interval_to_deadline((int)seconds, NSEC_PER_SEC, &deadline);
++	thread_call_enter_delayed(press_call, deadline);
++	printf("VINCE INPUT: press_power: key 0 held %u ms at %u s and %u s\n", press_ms, seconds, seconds + 10);
++}
++
+ vince_input_start(void)
+ {
++	press_power_init();
+ 	int keys = 1, touch = 0; /* touch remains opt-in */
+ 	thread_t thread;
+ 

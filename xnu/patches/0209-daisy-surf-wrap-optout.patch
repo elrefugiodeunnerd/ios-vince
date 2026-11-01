@@ -1,0 +1,26 @@
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index df9fa07..5575eb9 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -973,6 +973,21 @@ sweet_surface_image_layout(SweetSurface *s, const uint8_t *in, uint32_t len, uin
+ IOReturn
+ IOSurfaceRootUserClient::wrapClient(uint32_t selector, IOExternalMethodArguments *args)
+ {
++	/* boot-arg surf_wrap=0 refuses the window server's picture wraps again, for comparing
++	 * (hakios 759b6205: about 4000 refused wraps a second pushed CA onto other paths). */
++	static uint32_t wrap_on = 1;
++	static bool wrap_parsed;
++	if (!wrap_parsed) {
++		wrap_parsed = true;
++		PE_parse_boot_argn("surf_wrap", &wrap_on, sizeof(wrap_on));
++	}
++	if (selector == kSweetSurfaceWrapClientImage && !wrap_on) {
++		static uint32_t told;
++		if (told++ < 4) {
++			IOLog("SWEET SURF: surf_wrap=0; picture wraps refused\n");
++		}
++		return kIOReturnUnsupported;
++	}
+ 	SweetSurface *s = sweet_surface_alloc();
+ 	if (s == NULL) {
+ 		return kIOReturnNoMemory;
