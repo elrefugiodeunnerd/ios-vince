@@ -35,7 +35,7 @@ metal_render_smoke(hakios_metal_device *device)
 	fprintf(stderr, "RENDER SMOKE: starting (tri_flat over a 64x64 RGBA8 target)\n");
 
 	hakios_metal_texture *target = hakios_metal_texture_new(device, 2, 70, 64, 64,
-	    HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET, 1);
+	    HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET);
 	if (target == NULL) {
 		fprintf(stderr, "RENDER SMOKE: FAIL: no target texture: %s\n", hakios_metal_error());
 		return;
@@ -74,8 +74,7 @@ metal_render_smoke(hakios_metal_device *device)
 
 	const unsigned char *pixels = (const unsigned char *)hakios_metal_texture_contents(target);
 	if (pixels == NULL) {
-		fprintf(stderr, "RENDER SMOKE: FAIL: the target is not mapped
-");
+		fprintf(stderr, "RENDER SMOKE: FAIL: the target is not mapped\n");
 		return;
 	}
 	// RGBA8Unorm rows are 64*4 bytes, the layout texture.hpp lays a linear single-level 2D out as
@@ -84,8 +83,7 @@ metal_render_smoke(hakios_metal_device *device)
 		for (unsigned x = 0; x < 64; x++) {
 			const unsigned char *px = pixels + (y * 64 + x) * 4;
 			if (px[0] != 0x20 || px[1] != 0x40 || px[2] != 0x80 || px[3] != 0xff) {
-				fprintf(stderr, "RENDER SMOKE: pixel (%u,%u) is %02x %02x %02x %02x, want 20 40 80 ff
-",
+				fprintf(stderr, "RENDER SMOKE: pixel (%u,%u) is %02x %02x %02x %02x, want 20 40 80 ff\n",
 				    x, y, px[0], px[1], px[2], px[3]);
 				bad++;
 				break;
@@ -93,8 +91,7 @@ metal_render_smoke(hakios_metal_device *device)
 		}
 	}
 	if (bad == 0) {
-		fprintf(stderr, "RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read back flat
-");
+		fprintf(stderr, "RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read back flat\n");
 	} else {
 		fprintf(stderr, "RENDER SMOKE: FAIL: %d rows wrong\n", bad);
 	}
