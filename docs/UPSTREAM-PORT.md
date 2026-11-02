@@ -321,3 +321,27 @@ kept rendering (`redwood-gl` frames, touch input); there were no
 backboardd or SpringBoard crashes. The only repeated failure is
 `CollectionsPoster` (`extension check-in timeout`, then "too many corpses"),
 which is separate from the GPU path.
+
+
+### The a5xx render smoke — ready to boot, 2026-11-03
+
+The render half of the smoke, opt-in by rendersmoke=1 (the injector loads
+the same libmetal-smoke.dylib): one tri_flat draw over a 64x64 RGBA8
+target — six vertices, the whole target covered — through render5's a5xx
+sequence, then all 4096 pixels read back against the flat colour
+20 40 80 ff (RGBA8Unorm, exact by UNORM conversion). The two stages are
+compiled by the phone from the embedded tri_flat bitcodes.
+
+- Userdata rebuilt with the gpu-stack from run 41532261573 (libmetal-smoke
+  grew to 8.4 MiB with the linked Mesa compiler archives):
+  /hdd/ios-daisy-root/ios16-root-20H392.simg, SHA-256 b11c74402a3ca943f1
+  (full value in /hdd/ios-daisy-root/ios16-root-20H392.img.sha256).
+- Image: artifacts/daisy-gpu-rendersmoke-0208/daisy-boot.img, 17,981,440
+  bytes, SHA-256
+  daecd1dbf3bb0fe5b1f55facebe3195eb6b2526df085465c8336ec26c2eda4cc
+  (the proven arguments, rendersmoke=1 for the render half).
+- Console lines: "RENDER SMOKE: starting", "program compiled from the
+  embedded AIR bitcodes", "draw encoded, submitting", then per-row
+  correctness and "RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read
+  back flat" — or the first failing pixel's coordinates and value, which
+  names the broken stage (raster, ROP, or the flush).
