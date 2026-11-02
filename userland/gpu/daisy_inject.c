@@ -287,7 +287,7 @@ daisy_inject(void)
 	have_args = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0;
 	if (have_args) {
 		caenv(args);
-		if (strstr(args, " metalsmoke=1") != NULL) {
+		if (strstr(args, " metalsmoke=1") != NULL || strstr(args, " rendersmoke=1") != NULL) {
 			// Run only after dlopen has completed every C++ initializer in the library.
 			void *smoke = dlopen("/daisy/lib/libmetal-smoke.dylib", RTLD_NOW);
 			fprintf(stderr, "daisy: metal smoke %s: %s\n", smoke ? "loaded" : "not loaded", smoke ? "ok" : dlerror());

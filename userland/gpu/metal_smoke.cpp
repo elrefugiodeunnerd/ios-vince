@@ -19,9 +19,94 @@
 #include "hakios-metal/hakios_metal.h"
 
 #include "metal_smoke_fill_id_bc.h"
+#include "metal_smoke_tri_bc.h"
 
 static const uint32_t kConstantValue = 0x00C0FFEEu;
 static const uint32_t kMagic = 0x9E3779B1u;
+
+// The render half, opt-in by rendersmoke=1: one tri_flat draw over the whole
+// target (six vertices, the lower-left half and its complement), then every
+// pixel read back against the flat colour 0x20,0x40,0x80,0xff (RGBA8Unorm).
+// The draw exercises render5's a5xx sequence: the restore, the pass, the
+// program preload, the raster state, CP_DRAW_INDX_OFFSET and both flushes.
+static void
+metal_render_smoke(hakios_metal_device *device)
+{
+	fprintf(stderr, "RENDER SMOKE: starting (tri_flat over a 64x64 RGBA8 target)
+");
+
+	hakios_metal_texture *target = hakios_metal_texture_new(device, 2, 70, 64, 64,
+	    HAKIOS_METAL_TEXTURE_USAGE_RENDER_TARGET, 1);
+	if (target == NULL) {
+		fprintf(stderr, "RENDER SMOKE: FAIL: no target texture: %s
+", hakios_metal_error());
+		return;
+	}
+
+	hakios_metal_program *program = hakios_metal_program_new_bitcode(kTriFlatVsBc, kTriFlatVsBcSize,
+	    kTriFlatFsBc, kTriFlatFsBcSize, 70);
+	if (program == NULL) {
+		fprintf(stderr, "RENDER SMOKE: FAIL: the program did not compile: %s
+", hakios_metal_error());
+		return;
+	}
+	fprintf(stderr, "RENDER SMOKE: program compiled from the embedded AIR bitcodes
+");
+
+	hakios_metal_queue *queue = hakios_metal_queue_new(device);
+	hakios_metal_cb *cb = hakios_metal_cb_new(queue);
+
+	struct hakios_metal_render_pass pass;
+	memset(&pass, 0, sizeof(pass));
+	pass.color0 = target;
+	pass.load_action = 1;              // Load: the draw covers the whole target
+	pass.store_action = 1;             // Store
+	struct hakios_metal_viewport viewport = {0, 0, 64, 64, 0, 1};
+	int r = hakios_metal_cb_draw(cb, program, &pass, &viewport, nullptr,
+	    3 /* triangle */, 0, 6 /* both halves */, 1, nullptr, nullptr, 0, nullptr, nullptr, 0);
+	if (r != 0) {
+		fprintf(stderr, "RENDER SMOKE: FAIL: the draw was refused: %s
+", hakios_metal_error());
+		return;
+	}
+	fprintf(stderr, "RENDER SMOKE: draw encoded, submitting
+");
+	hakios_metal_cb_commit(cb, nullptr, nullptr);
+	hakios_metal_cb_wait(cb);
+	if (hakios_metal_cb_status(cb) != HAKIOS_METAL_COMPLETED) {
+		fprintf(stderr, "RENDER SMOKE: FAIL: submit/fence: %s
+", hakios_metal_cb_error(cb));
+		return;
+	}
+
+	const unsigned char *pixels = (const unsigned char *)hakios_metal_texture_contents(target);
+	if (pixels == NULL) {
+		fprintf(stderr, "RENDER SMOKE: FAIL: the target is not mapped
+");
+		return;
+	}
+	// RGBA8Unorm rows are 64*4 bytes, the layout texture.hpp lays a linear single-level 2D out as
+	int bad = 0;
+	for (unsigned y = 0; y < 64 && bad < 4; y++) {
+		for (unsigned x = 0; x < 64; x++) {
+			const unsigned char *px = pixels + (y * 64 + x) * 4;
+			if (px[0] != 0x20 || px[1] != 0x40 || px[2] != 0x80 || px[3] != 0xff) {
+				fprintf(stderr, "RENDER SMOKE: pixel (%u,%u) is %02x %02x %02x %02x, want 20 40 80 ff
+",
+				    x, y, px[0], px[1], px[2], px[3]);
+				bad++;
+				break;
+			}
+		}
+	}
+	if (bad == 0) {
+		fprintf(stderr, "RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read back flat
+");
+	} else {
+		fprintf(stderr, "RENDER SMOKE: FAIL: %d rows wrong
+", bad);
+	}
+}
 
 // Called by the injector AFTER dlopen returns. A constructor here would run
 // before the statically linked driver's maps (command.cpp and texture.cpp).
@@ -30,7 +115,7 @@ daisy_metal_smoke(void)
 {
 	char args[1024] = "";
 	size_t size = sizeof(args) - 1;
-	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || strstr(args, " metalsmoke=1") == NULL) {
+	if (sysctlbyname("kern.bootargs", args, &size, NULL, 0) != 0 || strstr(args, " metalsmoke=1") == NULL && strstr(args, " rendersmoke=1") == NULL) {
 		return;
 	}
 
@@ -46,6 +131,10 @@ daisy_metal_smoke(void)
 	    (unsigned long long)hakios_metal_gpu_id(device));
 	if (hakios_metal_gpu_id(device) != 0x05000600) {
 		fprintf(stderr, "METAL SMOKE: FAIL: expected the A506\n");
+		return;
+	}
+	if (strstr(args, " rendersmoke=1") != NULL && strstr(args, " metalsmoke=1") == NULL) {
+		metal_render_smoke(device);
 		return;
 	}
 
@@ -141,4 +230,6 @@ daisy_metal_smoke(void)
 	} else {
 		fprintf(stderr, "METAL SMOKE: FAIL: %d of 4 words wrong\n", bad);
 	}
+	metal_render_smoke(device);
+
 }
