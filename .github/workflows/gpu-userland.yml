@@ -65,7 +65,7 @@ jobs:
           cd /tmp/hakios-metal
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           IOS_MESA_ROOT="$GITHUB_WORKSPACE/userland/mesa/build-mesa" \
-            make ios MESA=1 \
+            make out/ios/libhakios-metal.a MESA=1 \
             IOS_CXX="xcrun clang++ -arch arm64 -isysroot $SDK -miphoneos-version-min=16.0" \
             IOS_CXXFLAGS="-std=c++17 -O2 -Wall -Wextra -Werror -Wno-invalid-constexpr" \
             IOS_AR="ar rcs"
