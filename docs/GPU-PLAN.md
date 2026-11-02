@@ -50,6 +50,14 @@ exporting `daisy_metal_smoke()` and calling it after `dlopen`. The rebuilt
 userdata is ready for the phone; the 0208 image is unchanged. See
 [the render5 section](UPSTREAM-PORT.md#the-render5-host-slice-and-the-rebuilt-smoke-userdata--2026-11-02).
 
+**On the phone the smoke passes end to end (2026-11-02).** The device opened
+`VinceGPU` as chip `0x05000600`, compiled `fill_id` with its own AIR front
+end, encoded and submitted 119 words in 5 buffers, completed fence 2, and
+read back all four correct words. backboardd remained alive and rendering.
+This validates transport, GEM, on-device compilation, A5xx dispatch,
+submit/fence and memory order; `render5` itself is the next slice to
+exercise.
+
 ## Recovery evidence
 
 Temporarily booted TWRP on serial `6790a29e0305` after the user returned to

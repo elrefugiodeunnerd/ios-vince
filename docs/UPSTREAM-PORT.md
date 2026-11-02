@@ -293,7 +293,31 @@ from 707 KiB to 8.4 MiB.
 - The 0208 boot image is unchanged (same SHA-256 as above); it already
   carries `metalsmoke=1`.
 
-Next: flash the rebuilt userdata and `fastboot boot` the 0208 image. The
-phone must reach "kernel compiled", a completed dispatch and fence, the
-four correct words and "METAL SMOKE: PASS". Nothing below that line is
-validated hardware behaviour yet.
+**Phone result (2026-11-02): PASS.** The rebuilt userdata booted with the
+0208 image. The persistent console
+(`artifacts/console-metalsmoke-a5xx-20261102.log`, 1,147,465 bytes,
+SHA-256 `d84d54ea2ebd7cd6c4eac2face124ebe1910298f9cd89423f55e07c5a89900a8`)
+shows all eleven GPU stages, the verified 650 MHz configuration, pool v4
+and the allocator memory test. In backboardd:
+
+```
+METAL SMOKE: device open, gpu id 0x5000600
+METAL SMOKE: GEM allocated and mapped, out=0xc4fa0000 constants=0xc4fa4000
+METAL SMOKE: compiling AIR for chip 0x05000600
+METAL SMOKE: kernel compiled: fill_id, threadgroup 1x1x1
+METAL SMOKE: dispatch encoded, submitting 4 workgroups
+VinceGPU: submit fence=2 bos=5 IBs=1 first=0xc4fec000 words=119
+VinceGPU: completed fence=2
+METAL SMOKE: out[0] = 0x00c0ffee correct
+METAL SMOKE: out[1] = 0x9ef8799f correct
+METAL SMOKE: out[2] = 0x3d2ff350 correct
+METAL SMOKE: out[3] = 0xdb676d01 correct
+METAL SMOKE: PASS: the A506 ran the a5xx dispatch and the buffer reads back
+```
+
+The AIR front end, ir3 encoding, A5xx dispatch registers, submit and fence,
+and the readback are now validated on hardware. backboardd stayed up and
+kept rendering (`redwood-gl` frames, touch input); there were no
+backboardd or SpringBoard crashes. The only repeated failure is
+`CollectionsPoster` (`extension check-in timeout`, then "too many corpses"),
+which is separate from the GPU path.
