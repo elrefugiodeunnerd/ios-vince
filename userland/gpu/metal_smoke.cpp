@@ -41,7 +41,7 @@ metal_render_smoke(hakios_metal_device *device)
 		return;
 	}
 
-	hakios_metal_program *program = hakios_metal_program_new_bitcode(kTriFlatVsBc, kTriFlatVsBcSize,
+	hakios_metal_program *program = hakios_metal_program_new_bitcode_on_device(device, kTriFlatVsBc, kTriFlatVsBcSize,
 	    kTriFlatFsBc, kTriFlatFsBcSize, 70);
 	if (program == NULL) {
 		fprintf(stderr, "RENDER SMOKE: FAIL: the program did not compile: %s\n", hakios_metal_error());
