@@ -40,6 +40,16 @@ backboardd crash loop. The copy path takes about 160–220 ms per readback;
 stalls and GL errors. Shared-surface rendering remains unvalidated. See
 [0198 rendering result](#0198-rendering-result--2026-10-31).
 
+**The A5xx draw path now has a host-validated slice.** The `a5xx-port`
+Metal tree adds `render5.cpp` (one linear RGBA8/BGRA8 sysmem target,
+nonindexed triangle lists, pushed constants and sampled textures, flushed
+framebuffer fetch), `texture5.hpp` fd5 descriptors and tables, per-chip AIR
+compilation, and the A5xx dispatch fixes. The host suite is 273/273 green.
+The smoke crash loop was a static-initialization order bug, now fixed by
+exporting `daisy_metal_smoke()` and calling it after `dlopen`. The rebuilt
+userdata is ready for the phone; the 0208 image is unchanged. See
+[the render5 section](UPSTREAM-PORT.md#the-render5-host-slice-and-the-rebuilt-smoke-userdata--2026-11-02).
+
 ## Recovery evidence
 
 Temporarily booted TWRP on serial `6790a29e0305` after the user returned to

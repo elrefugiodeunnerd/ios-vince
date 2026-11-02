@@ -242,3 +242,58 @@ reads the buffer back against gid * 0x9E3779B1 + 0x00C0FFEE.
   (the chip id the transport ABI reports), "kernel compiled", then
   "out[0..3] = ... correct" and "METAL SMOKE: PASS" — or the first failing
   line, which names the layer (transport, compiler, encode or memory).
+
+That run crash-looped: the dylib's constructor ran before command.cpp's
+and texture.cpp's static initializers, so every `newBuffer()` reached an
+unbuilt map and `metal_smoke` SIGSEGV'd 79 times. `daisy_inject.c` now
+calls an exported `daisy_metal_smoke()` after `dlopen` returns, and the
+smoke refuses anything but an A506, initializes both GEM buffers, uses a
+1x1x1 group and waits on the dispatch fence.
+
+### The render5 host slice and the rebuilt smoke userdata — 2026-11-02
+
+The Metal tree (`proxer05/hakios-metal`, branch `a5xx-port`, commit
+`926f103`) now carries the initial A5xx draw slice:
+
+- `render5.cpp`: a sysmem pass for one linear RGBA8/BGRA8 target with a
+  nonindexed triangle list, one instance, no depth/MSAA/blend/multiple
+  targets. It serves pushed constants and sampled VS/FS textures, and
+  implements framebuffer fetch as a flushed texture read (one triangle per
+  fetching draw). Unsupported state is refused before anything reaches the
+  stream.
+- `texture5.hpp`/`texture.cpp`: fd5-formatted texture and sampler tables and
+  single-level linear colour descriptors.
+- `compute.cpp`/`compiler.cpp`: A5xx dispatch encoding fixes and per-chip
+  compiler instances, so AIR is compiled for the chip the transport reports
+  instead of the A6xx default.
+- `tools/gen-a5xx.py` also finds registers fd5 names only through a field
+  macro prefix (`GRAS_SC_DEST_MSAA_CNTL`, `TPL1_TP_DEST_MSAA_CNTL`), which
+  completes render5's restore list.
+
+Host: `make test MESA=1 ...` reports **273 tests, 0 failed**, including the
+new `render5_sysmem_draw_words`, `render5_refusals_leave_the_stream_empty`
+and `texture5` tests.
+
+The userland workflows are now one `userland` workflow with a `helpers` job
+and a `gpu-stack` job (run 41471285426, both green); `gpu-userland.yml` is
+gone. The `gpu-stack` job links the iOS Mesa archives into
+`libmetal-smoke.dylib`, so the on-device AIR compiler is really present:
+`nm` shows `_air_to_nir` and `_ir3_compile_shader_nir`, and the dylib grew
+from 707 KiB to 8.4 MiB.
+
+- `libhakios-metal.a` SHA-256
+  a6839c5e516215b889b74f568ced0259bd1e34425faede57300563846d2a93f4
+- `libmetal-smoke.dylib` SHA-256
+  c4021eaf3b08605df7d1646a88c93856c1bfd9e7a98b0410cad48cab6874b28a
+- Userdata rebuilt by `/hdd/ios-daisy-root/build_root.sh` and staged with
+  those artifacts: `ios16-root-20H392.img` SHA-256
+  cfdd6a1471f48b88cf8ae7409aeb1a375e78b3aad20c7a7571a61a6235143205,
+  sparse `ios16-root-20H392.simg` SHA-256
+  5feb423bd7b6a84b7b760b8507e7ccaa18133b7332e05eb5f8136933cf0966e8.
+- The 0208 boot image is unchanged (same SHA-256 as above); it already
+  carries `metalsmoke=1`.
+
+Next: flash the rebuilt userdata and `fastboot boot` the 0208 image. The
+phone must reach "kernel compiled", a completed dispatch and fence, the
+four correct words and "METAL SMOKE: PASS". Nothing below that line is
+validated hardware behaviour yet.
