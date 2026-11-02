@@ -213,3 +213,32 @@ The toolchain state on this machine: the Mesa+AIR host build lives at
 in `~/.local`), and `hakios-metal` tests pass against it with
 `make test MESA=1 MESA_SRC=... MESA_BUILD=... LLVM_AS='python3
 tools/llvm-as-15.py'`.
+
+
+### The a5xx Metal smoke test image — 2026-11-02
+
+The first phone test of the a5xx dispatch path end to end: the 0208 kernel
+(650 MHz, pool v4, presenter, IOMFBDisplayRefresh), a userdata root carrying
+the macos-15 gpu-stack plus libmetal-smoke.dylib, and metalsmoke=1 in the
+boot args. The smoke (userland/gpu/metal_smoke.cpp, injected into
+backboardd with the GPU stack) opens the GPU service through the ported
+transport, prints the chip id VinceGPU reports, compiles fill_id ON the
+phone with its own AIR front end (the LLVM 15 bitcode embedded in the
+dylib), dispatches it over a grid of 4 through the a5xx path, waits and
+reads the buffer back against gid * 0x9E3779B1 + 0x00C0FFEE.
+
+- Kernel: artifacts/kernel-0208/kernel.development.vince (SHA-256
+  484522b9c2388dcc230b0fc5831f3f0c489720210a90af9201c5c2ab4d8e6529).
+- Image: artifacts/daisy-gpu-metalsmoke-0208/daisy-boot.img, 17,981,440
+  bytes, SHA-256
+  4ab5d5cf2d3631c05c18048cee7a5334865d25eba59d1567733bccdb724e7935
+  (the proven arguments plus metalsmoke=1).
+- Userdata: /hdd/ios-daisy-root/ios16-root-20H392.simg (sparse, SHA-256
+  254f7555e4d0652368f5332585f2893ebcda1f8414e58cb26d8d860f3f716b1f), built
+  by build_root.sh with the gpu-stack 41367936111 artifacts
+  (libhakios-metal.a from the a5xx-port fork, libmetal-smoke.dylib linked
+  against it; the build log records the install into /daisy/lib).
+- What to look for in the console: "METAL SMOKE: device open, gpu id ..."
+  (the chip id the transport ABI reports), "kernel compiled", then
+  "out[0..3] = ... correct" and "METAL SMOKE: PASS" — or the first failing
+  line, which names the layer (transport, compiler, encode or memory).
