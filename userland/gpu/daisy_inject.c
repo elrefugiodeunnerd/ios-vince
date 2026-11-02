@@ -288,9 +288,17 @@ daisy_inject(void)
 	if (have_args) {
 		caenv(args);
 		if (strstr(args, " metalsmoke=1") != NULL) {
-			// the a5xx Metal smoke test, in this process (metal_smoke.cpp; its constructor runs here)
+			// Run only after dlopen has completed every C++ initializer in the library.
 			void *smoke = dlopen("/daisy/lib/libmetal-smoke.dylib", RTLD_NOW);
 			fprintf(stderr, "daisy: metal smoke %s: %s\n", smoke ? "loaded" : "not loaded", smoke ? "ok" : dlerror());
+			if (smoke != NULL) {
+				void (*run)(void) = (void (*)(void))dlsym(smoke, "daisy_metal_smoke");
+				if (run != NULL) {
+					run();
+				} else {
+					fprintf(stderr, "METAL SMOKE: FAIL: entry point: %s\n", dlerror());
+				}
+			}
 		}
 	}
 	if (have_args && strstr(args, " gl=0") != NULL) {
@@ -316,4 +324,3 @@ daisy_inject(void)
 	fprintf(stderr, "daisy-crash: handlers set, GL (%s) %s\n", gl_path, lib ? "loaded" : dlerror());
 	syslog(LOG_NOTICE, "daisy: %s %s", gl_path, lib ? "loaded" : dlerror());
 }
-

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <dlfcn.h>
+#include <memory>
 #include <sys/sysctl.h>
 
 #include "hakios-metal/hakios_metal.h"
@@ -22,9 +23,10 @@
 static const uint32_t kConstantValue = 0x00C0FFEEu;
 static const uint32_t kMagic = 0x9E3779B1u;
 
-__attribute__((constructor))
-static void
-metal_smoke(void)
+// Called by the injector AFTER dlopen returns. A constructor here would run
+// before the statically linked driver's maps (command.cpp and texture.cpp).
+extern "C" void
+daisy_metal_smoke(void)
 {
 	char args[1024] = "";
 	size_t size = sizeof(args) - 1;
@@ -34,49 +36,90 @@ metal_smoke(void)
 
 	fprintf(stderr, "METAL SMOKE: starting (fill_id on the device's own compiler)\n");
 
-	hakios_metal_device *device = hakios_metal_open();
+	std::unique_ptr<hakios_metal_device, decltype(&hakios_metal_close)> deviceOwner(hakios_metal_open(), hakios_metal_close);
+	hakios_metal_device *device = deviceOwner.get();
 	if (device == NULL) {
 		fprintf(stderr, "METAL SMOKE: FAIL: no device: %s\n", hakios_metal_error());
 		return;
 	}
 	fprintf(stderr, "METAL SMOKE: device open, gpu id 0x%llx\n",
 	    (unsigned long long)hakios_metal_gpu_id(device));
+	if (hakios_metal_gpu_id(device) != 0x05000600) {
+		fprintf(stderr, "METAL SMOKE: FAIL: expected the A506\n");
+		return;
+	}
 
 	hakios_metal_buffer *out = hakios_metal_buffer_new(device, 64);
+	std::unique_ptr<hakios_metal_buffer, decltype(&hakios_metal_buffer_free)> outOwner(out, hakios_metal_buffer_free);
 	hakios_metal_buffer *cbuf = hakios_metal_buffer_new(device, 16);
+	std::unique_ptr<hakios_metal_buffer, decltype(&hakios_metal_buffer_free)> constantsOwner(cbuf, hakios_metal_buffer_free);
 	if (out == NULL || cbuf == NULL) {
 		fprintf(stderr, "METAL SMOKE: FAIL: no buffers: %s\n", hakios_metal_error());
 		return;
 	}
 	uint32_t *c = (uint32_t *)hakios_metal_buffer_contents(cbuf);
-	if (c == NULL) {
-		fprintf(stderr, "METAL SMOKE: FAIL: the constants buffer is not mapped\n");
+	uint32_t *output = (uint32_t *)hakios_metal_buffer_contents(out);
+	if (c == NULL || output == NULL) {
+		fprintf(stderr, "METAL SMOKE: FAIL: buffers are not mapped\n");
 		return;
 	}
+	memset(c, 0, 16);
+	memset(output, 0xa5, 64);
 	c[0] = kConstantValue;
+	fprintf(stderr, "METAL SMOKE: GEM allocated and mapped, out=0x%llx constants=0x%llx\n",
+	    (unsigned long long)hakios_metal_buffer_gpu_address(out),
+	    (unsigned long long)hakios_metal_buffer_gpu_address(cbuf));
+	fprintf(stderr, "METAL SMOKE: compiling AIR for chip 0x05000600\n");
 
-	hakios_metal_kernel *k = hakios_metal_kernel_compile_bitcode(kFillIdBc, kFillIdBcSize);
+	hakios_metal_kernel *k = hakios_metal_kernel_compile_bitcode_on_device(device, kFillIdBc, kFillIdBcSize);
+	std::unique_ptr<hakios_metal_kernel, decltype(&hakios_metal_kernel_free)> kernelOwner(k, hakios_metal_kernel_free);
 	if (k == NULL) {
 		fprintf(stderr, "METAL SMOKE: FAIL: the kernel did not compile: %s\n", hakios_metal_error());
 		return;
 	}
 	unsigned threads[3];
 	hakios_metal_kernel_threadgroup_size(k, threads);
+	// fill_id has a variable workgroup size. This smoke chooses one invocation
+	// per group so the four groups write exactly out[0..3].
+	for (unsigned i = 0; i < 3; i++) {
+		if (threads[i] == 0) threads[i] = 1;
+	}
+	if (threads[0] != 1 || threads[1] != 1 || threads[2] != 1) {
+		fprintf(stderr, "METAL SMOKE: FAIL: fill_id requires a 1x1x1 smoke workgroup\n");
+		return;
+	}
 	fprintf(stderr, "METAL SMOKE: kernel compiled: %s, threadgroup %ux%ux%u\n",
 	    hakios_metal_kernel_name(k), threads[0], threads[1], threads[2]);
 
 	hakios_metal_queue *queue = hakios_metal_queue_new(device);
+	std::unique_ptr<hakios_metal_queue, decltype(&hakios_metal_queue_free)> queueOwner(queue, hakios_metal_queue_free);
+	if (queue == NULL) {
+		fprintf(stderr, "METAL SMOKE: FAIL: queue: %s\n", hakios_metal_error());
+		return;
+	}
 	hakios_metal_cb *cb = hakios_metal_cb_new(queue);
+	std::unique_ptr<hakios_metal_cb, decltype(&hakios_metal_cb_free)> cbOwner(cb, hakios_metal_cb_free);
+	if (cb == NULL) {
+		fprintf(stderr, "METAL SMOKE: FAIL: command buffer: %s\n", hakios_metal_error());
+		return;
+	}
 	hakios_metal_buffer *buffers[2] = {out, cbuf};
 	uint64_t offsets[2] = {0, 0};
-	int r = hakios_metal_cb_dispatch2(cb, k, (const unsigned[]){4, 1, 1}, (const unsigned[]){threads[0], threads[1], threads[2]},
+	const unsigned groups[3] = {4, 1, 1};
+	int r = hakios_metal_cb_dispatch2(cb, k, groups, threads,
 	    (hakios_metal_buffer * const*)buffers, offsets, 2, nullptr, 0, nullptr, 0);
 	if (r != 0) {
 		fprintf(stderr, "METAL SMOKE: FAIL: the dispatch was refused: %s\n", hakios_metal_error());
 		return;
 	}
+	fprintf(stderr, "METAL SMOKE: dispatch encoded, submitting 4 workgroups\n");
 	hakios_metal_cb_commit(cb, nullptr, nullptr);
 	hakios_metal_cb_wait(cb);
+	if (hakios_metal_cb_status(cb) != HAKIOS_METAL_COMPLETED) {
+		fprintf(stderr, "METAL SMOKE: FAIL: submit/fence: %s\n", hakios_metal_cb_error(cb));
+		return;
+	}
+	fprintf(stderr, "METAL SMOKE: fence completed, reading back\n");
 
 	const uint32_t *outWords = (const uint32_t *)hakios_metal_buffer_contents(out);
 	if (outWords == NULL) {

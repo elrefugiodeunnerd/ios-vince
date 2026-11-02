@@ -51,10 +51,11 @@ $(OUT)/cputop: cputop.c | $(OUT)
 # dispatch compiled by the phone's own AIR front end over the a5xx port of
 # hakios-metal (HAKIOS_METAL_OUT points at its `make ios MESA=1` output).
 HAKIOS_METAL_OUT ?= ../../../hakios-metal/out/ios
+HAKIOS_METAL_LIBS ?=
 $(OUT)/libmetal-smoke.dylib: metal_smoke.cpp metal_smoke_fill_id_bc.h $(HAKIOS_METAL_OUT)/libhakios-metal.a | $(OUT)
 	$(CC) $(CFLAGS) -dynamiclib -install_name $(LIBDIR)/libmetal-smoke.dylib \
 		-I$(HAKIOS_METAL_OUT)/../../include -o $@ metal_smoke.cpp $(HAKIOS_METAL_OUT)/libhakios-metal.a \
-		-lc++ -framework IOKit -framework IOSurface
+		$(HAKIOS_METAL_LIBS) -lc++ -framework IOKit -framework IOSurface
 	if [ -f "$(ENTITLEMENTS)" ]; then $(CODESIGN) --entitlements "$(ENTITLEMENTS)" $@; else $(CODESIGN) $@; fi
 
 $(OUT)/libtopaz-inject.dylib: topaz_inject.c | $(OUT)
@@ -79,4 +80,3 @@ clean:
 	rm -rf $(OUT) eagl_gen.h
 
 .PHONY: all clean
-
