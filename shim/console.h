@@ -21,3 +21,11 @@ void con_str_color(const char *label, const char *s, uint32_t color);
 void con_hex(const char *label, uint64_t v);
 /* label, then "a=xxxxxxxx b=xxxxxxxx" style pairs of 32-bit values */
 void con_hex2(const char *label, const char *a, uint32_t va, const char *b, uint32_t vb);
+
+/* The scaled display (boot-args fbw/fbh): reprogram the MDP5 VIG0 pipe to
+ * fetch the splash memory at w x h XRGB8888 and stretch it to the panel with
+ * its QSEED scaler, then switch this console to 32-bpp words at w x h. */
+void con_switch_scaled(uint32_t w, uint32_t h);
+uint32_t con_scaled_w(void);
+uint32_t con_scaled_h(void);
+int con_is_scaled(void);

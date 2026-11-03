@@ -1,0 +1,30 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 075804a..0725a88 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -228,9 +228,22 @@ AppleCLCD::start(IOService *provider)
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+ 	fLogicalW = fWidth;
+ 	fLogicalH = fHeight;
+-	if (!native && fWidth <= SWEET_FB_LOGICAL_W && fHeight <= SWEET_FB_LOGICAL_H) {
+-		fLogicalW = SWEET_FB_LOGICAL_W;
+-		fLogicalH = SWEET_FB_LOGICAL_H;
++	/* the scaled display (the shim's fbscale trick, the mia1 shim's fbscale=2): fbw/fbh
++	 * reprogrammed the MDP's VIG0 pipe to fetch this very framebuffer at the smaller size
++	 * and stretch it to the panel with its QSEED scaler -- iOS draws at two pixels a
++	 * point and the MDP does the rest, so the logical size is the framebuffer's own and
++	 * nothing is scaled on the processor. Without the boot-args the iPhone X logical
++	 * size and the scale-to-fit apply as before. */
++	{
++		uint32_t fbwArg = 0, fbhArg = 0;
++		if (PE_parse_boot_argn("fbw", &fbwArg, sizeof(fbwArg)) && fbwArg == fWidth &&
++		    PE_parse_boot_argn("fbh", &fbhArg, sizeof(fbhArg)) && fbhArg == fHeight) {
++			IOLog("SWEET FB: scaled mode: iOS draws %ux%u, the MDP VIG0 stretches to the panel\n",
++			    fWidth, fHeight);
++		} else if (!native && fWidth <= SWEET_FB_LOGICAL_W && fHeight <= SWEET_FB_LOGICAL_H) {
++			fLogicalW = SWEET_FB_LOGICAL_W;
++			fLogicalH = SWEET_FB_LOGICAL_H;
++		}
+ 	}
+ 	fOffX = (int32_t)(fLogicalW - fWidth) / 2;
+ 	fOffY = (int32_t)(fLogicalH - fHeight) / 2;
