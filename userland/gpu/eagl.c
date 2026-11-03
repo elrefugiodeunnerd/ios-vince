@@ -300,6 +300,12 @@ struct eagl {
 		unsigned solid_ends, blended_ends;      /* ... and their lines' ends */
 		unsigned other_spans, other_ends;       /* line draws into other targets */
 	} line;
+	/* the frame's damage in the display's picture (glboxcopy): the union of the scissors of
+	 * everything drawn and cleared into it. Outside it the picture keeps what the frame before
+	 * put there, so only this much has to be copied out; the whole picture otherwise. */
+	bool damage_full;               /* a draw or clear without a scissor, or two display pictures */
+	GLint damage_box[4];
+	uint32_t damage_surface;        /* the display-sized picture's IOSurface this frame */
 	/* a frame's worth */
 	unsigned calls, draws, triangles, uploads, clears, last_draws;
 	uint64_t upload_bytes, began, attaching, flushing;
@@ -344,6 +350,7 @@ static int share_surfaces = 1;          /* boot-arg glcopy=1: 0 */
  * Boot-arg glblit=0: the surface's memory, as before.
  */
 static int blit_targets = 1;
+static int boxcopy = 1;                 /* boot-arg glboxcopy=0: copy the whole picture out again */
 /*
  * A frame that is handed to the display must have been drawn. The display's driver waits for
  * the GPU itself before it puts a surface on the panel, on a thread of its own, and says so in
@@ -829,7 +836,7 @@ surface_to_texture(struct eagl *e, struct image *image)
 
 /* What has been drawn into a texture, into its IOSurface, unless it is there (frame_end() waits for it). */
 static void
-target_to_surface(struct eagl *e, struct image *image)
+target_to_surface(struct eagl *e, struct image *image, const GLint *box)
 {
 	IOSurfaceRef surface = image->surface;
 	size_t row = IOSurfaceGetBytesPerRow(surface);
@@ -877,7 +884,24 @@ target_to_surface(struct eagl *e, struct image *image)
 		base = IOSurfaceGetBaseAddress(surface);
 		glPixelStorei(GL_PACK_ROW_LENGTH, (GLint)(row / 4));
 		glPixelStorei(GL_PACK_ALIGNMENT, 4);
-		if (!image->invert) {
+		if (box != NULL && box[2] > 0 && box[3] > 0) {
+			/* only what this frame drew (the damage, glboxcopy): outside it the
+			 * picture already holds what the frame before put there */
+			if (!image->invert) {
+				glPixelStorei(GL_PACK_SKIP_PIXELS, box[0]);
+				glPixelStorei(GL_PACK_SKIP_ROWS, box[1]);
+				glReadPixels(box[0], box[1], box[2], box[3], GL_BGRA, GL_UNSIGNED_BYTE, base);
+				glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+				glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+			} else {
+				for (GLsizei y = 0; y < box[3]; y++) {
+					GLsizei top = box[1] + y;
+
+					glReadPixels(box[0], top, box[2], 1, GL_BGRA, GL_UNSIGNED_BYTE,
+					    base + row * (size_t)(image->height - 1 - top) + (size_t)box[0] * 4);
+				}
+			}
+		} else if (!image->invert) {
 			glReadPixels(0, 0, image->width, image->height, GL_BGRA, GL_UNSIGNED_BYTE, base);
 		} else {
 			for (GLsizei y = 0; y < image->height; y++) {
@@ -1027,13 +1051,32 @@ frame_end(struct eagl *e, bool finished)
 	waited = now_us();
 	for (unsigned i = 0; i < e->image_count; i++) {
 		if (e->images[i].target && e->images[i].drawn) {
-			copied += !e->images[i].shared;
-			target_to_surface(e, &e->images[i]);
+			struct image *image = &e->images[i];
+			const GLint *box = NULL;
+			GLint clipped[4];
+
+			copied += !image->shared;
+			if (boxcopy && !e->damage_full && e->damage_surface != 0 &&
+			    e->damage_surface == IOSurfaceGetID(image->surface)) {
+				int x1 = e->damage_box[0] + e->damage_box[2], y1 = e->damage_box[1] + e->damage_box[3];
+
+				clipped[0] = e->damage_box[0] < 0 ? 0 : e->damage_box[0];
+				clipped[1] = e->damage_box[1] < 0 ? 0 : e->damage_box[1];
+				clipped[2] = (x1 > image->width ? image->width : x1) - clipped[0];
+				clipped[3] = (y1 > image->height ? image->height : y1) - clipped[1];
+				if (clipped[2] > 0 && clipped[3] > 0) {
+					box = clipped;
+				}
+			}
+			target_to_surface(e, image, box);
 			if (shown_texture != 0) {
-				show_texture(e, &e->images[i]);
+				show_texture(e, image);
 			}
 		}
 	}
+	e->damage_full = false;
+	e->damage_surface = 0;
+	e->damage_box[0] = e->damage_box[1] = e->damage_box[2] = e->damage_box[3] = 0;
 	if (!e->in_frame) {
 		return;
 	}
@@ -1144,6 +1187,41 @@ drawing(struct eagl *e)
 	frame_begin(e);
 	if (e->framebuffer != 0 && e->colour != 0 && (image = image_of(e, e->colour)) != NULL && image->target) {
 		image->drawn = image->painted = true;
+		if (image->width >= 1000 && image->height >= 2000) {
+			uint32_t id = IOSurfaceGetID(image->surface);
+
+			if (e->damage_surface != 0 && e->damage_surface != id) {
+				e->damage_full = true;
+			}
+			e->damage_surface = id;
+			if (glIsEnabled(GL_SCISSOR_TEST)) {
+				GLint box[4];
+
+				glGetIntegerv(GL_SCISSOR_BOX, box);
+				if (box[2] > 0 && box[3] > 0) {
+					if (e->damage_box[2] == 0 && e->damage_box[3] == 0) {
+						e->damage_box[0] = box[0];
+						e->damage_box[1] = box[1];
+						e->damage_box[2] = box[2];
+						e->damage_box[3] = box[3];
+					} else {
+						int x0 = box[0] < e->damage_box[0] ? box[0] : e->damage_box[0];
+						int y0 = box[1] < e->damage_box[1] ? box[1] : e->damage_box[1];
+						int x1 = box[0] + box[2] > e->damage_box[0] + e->damage_box[2] ?
+						    box[0] + box[2] : e->damage_box[0] + e->damage_box[2];
+						int y1 = box[1] + box[3] > e->damage_box[1] + e->damage_box[3] ?
+						    box[1] + box[3] : e->damage_box[1] + e->damage_box[3];
+
+						e->damage_box[0] = x0;
+						e->damage_box[1] = y0;
+						e->damage_box[2] = x1 - x0;
+						e->damage_box[3] = y1 - y0;
+					}
+				}
+			} else {
+				e->damage_full = true;
+			}
+		}
 		if (frame_lines && image->width >= 1000 && image->height >= 2000) {
 			/* the display's picture (a surface of its size): where this frame first draws into it */
 			e->line.into_display++;
@@ -3729,6 +3807,7 @@ install(void)
 		}
 		share_surfaces = strstr(arguments, "glcopy=1") == NULL;
 		blit_targets = strstr(arguments, "glblit=0") == NULL;
+		boxcopy = strstr(arguments, "glboxcopy=0") == NULL;
 		sync_frames = strstr(arguments, "glsync=0") == NULL;
 		if (strstr(arguments, "glwait=0") != NULL || (strstr(arguments, "glwait=1") == NULL && display_waits())) {
 			wait_for_frames = 0;
