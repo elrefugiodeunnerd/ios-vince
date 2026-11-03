@@ -83,6 +83,11 @@ con_switch_scaled(uint32_t w, uint32_t h)
 	con_hex2("MDP RGB0", "src", rgb_src, "vig", vig_src);
 	con_hex("MDP LAYER0", mdp_rd(MDP_CTL0_LAYER0));
 
+	/* 0211d probe-only: the 0211c boot force-rebooted, so this build only
+	 * logs the MDP state and takes the known-good 1080x2280 path -- the
+	 * values on screen name the ABL's live pipe and fetch layout. */
+	return 0;
+
 	if (rgb_src == panel_src) {
 		base = RGB0;
 		pipe_flush = FLUSH_LM0;			/* the RGB pipe has no scaler */
