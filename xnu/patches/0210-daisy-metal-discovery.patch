@@ -1,0 +1,21 @@
+diff --git a/iokit/Kernel/arm/VinceGPU.cpp b/iokit/Kernel/arm/VinceGPU.cpp
+--- a/iokit/Kernel/arm/VinceGPU.cpp
++++ b/iokit/Kernel/arm/VinceGPU.cpp
+@@ -492,9 +492,17 @@ static void
+ publishAccelerator(IOService *provider)
+ {
+ 	IOAcceleratorES *accelerator = OSTypeAlloc(IOAcceleratorES);
+ 	if (accelerator != NULL && accelerator->init() && accelerator->attach(provider)) {
++		uint32_t metal = 0;
++		/* Match upstream Metal.framework discovery; opt in with metal=1. */
++		if (PE_parse_boot_argn("metal", &metal, sizeof(metal)) && metal != 0) {
++			accelerator->setProperty("MetalPluginName", "HakiosMetal");
++			accelerator->setProperty("MetalPluginClassName", "HakiosMetalDevice");
++			IOLog("VinceGPU: metal=1: accelerator names HakiosMetal plug-in\n");
++		}
++
+ 		accelerator->setName("sgx");
+ 		accelerator->registerService();
+ 		IOLog("VinceGPU: IOAcceleratorES discovery service registered\n");
+ 	}
+ 	OSSafeReleaseNULL(accelerator);

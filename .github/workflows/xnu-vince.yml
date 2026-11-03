@@ -124,6 +124,8 @@ jobs:
               b'SWEET FB: IOMFBDisplayRefresh: ', b'fb_ca_hz',
               b'SWEET FB: presenter: fb_pri=', b'fb_filter',
               b'press_power: key 0 held', b'surf_wrap=0; picture wraps refused',
+              b'VinceGPU: metal=1: accelerator names HakiosMetal plug-in',
+              b'MetalPluginName', b'MetalPluginClassName',
           ):
               if marker not in data:
                   raise SystemExit(f'{kernel}: missing daisy fix marker {marker!r}')
