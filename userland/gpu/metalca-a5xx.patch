@@ -1,0 +1,30 @@
+diff --git a/userland/src/HakiosMetalCA.m b/userland/src/HakiosMetalCA.m
+--- a/userland/src/HakiosMetalCA.m
++++ b/userland/src/HakiosMetalCA.m
+@@ -2155,7 +2155,7 @@
+ 	/* QuartzCore's of this image (the iPhone X's) has no default.metallib beside it; the one made of its own functions
+ 	 * file (hakios: merge_metallib.py, the four uber shaders, one variant each -- hm_bitcode_for() picks the variant a
+ 	 * pipeline needs) stands in for it, from where the image puts it */
+-	NSString *ours = @"/redwood/share/ca-share/QuartzCore-default.metallib";
++	NSString *ours = @"/System/Library/Frameworks/QuartzCore.framework/default.metallib";
+ 	NSString *beside = [frame stringByAppendingPathComponent:@"default.metallib"];
+ 	if ([path rangeOfString:@"QuartzCore.framework"].location != NSNotFound && ![fm fileExistsAtPath:beside] &&
+ 	    [fm fileExistsAtPath:ours]) {
+@@ -2558,7 +2558,7 @@
+ 		hakios_metal_constant constants[64];
+ 		unsigned count = hm_function_constants(function, constants, 64);
+ 
+-		kernel = hakios_metal_kernel_compile_bitcode_constants([air bytes], [air length], constants, count);
++		kernel = hakios_metal_kernel_compile_bitcode_constants_on_device(_gpu, [air bytes], [air length], constants, count);
+ 		if (kernel != NULL) {
+ 			hm_dump_function("cs", function, "metal_dump=fn", constants, count);
+ 		}
+@@ -2867,7 +2867,7 @@
+ 		hakios_metal_constant vsConstants[64], fsConstants[64];
+ 		unsigned vsCount = hm_function_constants(vs, vsConstants, 64), fsCount = hm_function_constants(fs, fsConstants, 64);
+ 
+-		program = hakios_metal_program_new_bitcode_constants([vsAir bytes], [vsAir length], vsConstants, vsCount, fsAir != nil ? [fsAir bytes] : NULL,
++		program = hakios_metal_program_new_bitcode_constants_on_device(_gpu, [vsAir bytes], [vsAir length], vsConstants, vsCount, fsAir != nil ? [fsAir bytes] : NULL,
+ 								     fsAir != nil ? [fsAir length] : 0,
+ 								     fsConstants, fsCount, format);
+ 		if (program != NULL) {

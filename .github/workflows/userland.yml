@@ -82,7 +82,10 @@ jobs:
       - name: Build the a5xx Metal stack (hakios-metal a5xx-port, with the phone's own compiler)
         run: |
           set -e
-          git clone --depth 1 -b a5xx-port https://github.com/proxer05/hakios-metal /tmp/hakios-metal
+          # Pinned a5xx-port revision: device-aware CA pipelines and A5xx 2D refusals.
+          git init -q /tmp/hakios-metal
+          git -C /tmp/hakios-metal fetch --depth 1 https://github.com/proxer05/hakios-metal c2c6b31463ffe8699b980de114e1ccf4afec3fa5
+          git -C /tmp/hakios-metal checkout -q FETCH_HEAD
           cd /tmp/hakios-metal
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           IOS_MESA_ROOT="$GITHUB_WORKSPACE/userland/mesa/build-mesa" \
@@ -96,6 +99,36 @@ jobs:
           nm -gU out/libmetal-smoke.dylib | grep ' _daisy_metal_smoke$'
           nm out/libmetal-smoke.dylib | grep ' _air_to_nir$'
           nm out/libmetal-smoke.dylib | grep ' _ir3_compile_shader_nir$'
+
+      - name: Build the CoreAnimation Metal plug-in and stage shader tools
+        run: |
+          set -e
+          CA_REF=96ffbc532e970f3540885755d457e401e04d4707
+          git init -q /tmp/hakios-metalca
+          git -C /tmp/hakios-metalca fetch --depth 1 https://github.com/oosexgang/hakios-xnu-kernel "$CA_REF"
+          git -C /tmp/hakios-metalca checkout -q FETCH_HEAD
+          patch --fuzz=0 -d /tmp/hakios-metalca -p1 < userland/gpu/metalca-a5xx.patch
+          METAL_LIBS="$(make -s -C /tmp/hakios-metal print-ios-libs MESA=1 IOS_MESA_ROOT="$GITHUB_WORKSPACE/userland/mesa/build-mesa")"
+          make -C userland/gpu out/HakiosMetal CC="$(xcrun --sdk iphoneos -f clang)" \
+            HAKIOS_METAL_CA=/tmp/hakios-metalca HAKIOS_METAL_OUT=/tmp/hakios-metal/out/ios HAKIOS_METAL_LIBS="$METAL_LIBS"
+          nm userland/gpu/out/HakiosMetal | grep ' _hakios_metal_program_new_bitcode_constants_on_device$'
+          nm userland/gpu/out/HakiosMetal | grep ' _air_to_nir$'
+          mkdir -p out/gpu/HakiosMetal.bundle out/gpu/metalca
+          cp userland/gpu/out/HakiosMetal out/gpu/HakiosMetal.bundle/
+          cp /tmp/hakios-metalca/userland/src/HakiosMetal.plist out/gpu/HakiosMetal.bundle/Info.plist
+          codesign -f -s - out/gpu/HakiosMetal.bundle
+          codesign --verify out/gpu/HakiosMetal.bundle
+          cp /tmp/hakios-metalca/tools/merge_metallib.py userland/gpu/metalca_assets.py out/gpu/metalca/
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('ca_metallib', '/tmp/hakios-metalca/tools/ca-metallib.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          Path('out/gpu/metalca/QuartzCore-air64.metallib').write_bytes(module.air64_slice(module.MAC_QC))
+          PY
+          git -C /tmp/hakios-metal rev-parse HEAD > out/gpu/metalca/HAKIOS_METAL_COMMIT
+          printf '%s\n' "$CA_REF" > out/gpu/metalca/HAKIOS_CA_COMMIT
 
       - name: Sign and stage
         run: |
@@ -111,7 +144,7 @@ jobs:
           cp userland/gpu/out/libmetal-smoke.dylib out/gpu/
           cp userland/gpu/out/bbd_wrap out/gpu/
           cp userland/gpu/eagl_gen.h out/gpu/
-          (cd out/gpu && shasum -a 256 * > SHA256SUMS)
+          (cd out/gpu && find . -type f ! -name SHA256SUMS -exec shasum -a 256 {} \; > SHA256SUMS)
           file out/gpu/*
           ls -l out/gpu
 

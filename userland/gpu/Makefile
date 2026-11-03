@@ -52,6 +52,13 @@ $(OUT)/cputop: cputop.c | $(OUT)
 # hakios-metal (HAKIOS_METAL_OUT points at its `make ios MESA=1` output).
 HAKIOS_METAL_OUT ?= ../../../hakios-metal/out/ios
 HAKIOS_METAL_LIBS ?=
+HAKIOS_METAL_CA ?= ../../../hakios-xnu-kernel
+$(OUT)/HakiosMetal: $(HAKIOS_METAL_CA)/userland/src/HakiosMetalCA.m $(HAKIOS_METAL_OUT)/libhakios-metal.a | $(OUT)
+	$(CC) $(CFLAGS) -fblocks -fno-objc-arc -bundle \
+		-I$(HAKIOS_METAL_OUT)/../../include -o $@ $< $(HAKIOS_METAL_OUT)/libhakios-metal.a \
+		$(HAKIOS_METAL_LIBS) -lc++ -lobjc -framework Foundation -framework Metal -framework IOKit -framework IOSurface
+	$(CODESIGN) $@
+
 $(OUT)/libmetal-smoke.dylib: metal_smoke.cpp metal_smoke_fill_id_bc.h $(HAKIOS_METAL_OUT)/libhakios-metal.a | $(OUT)
 	$(CC) $(CFLAGS) -dynamiclib -install_name $(LIBDIR)/libmetal-smoke.dylib \
 		-I$(HAKIOS_METAL_OUT)/../../include -o $@ metal_smoke.cpp $(HAKIOS_METAL_OUT)/libhakios-metal.a \

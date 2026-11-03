@@ -287,6 +287,15 @@ daisy_inject(void)
 	have_args = sysctlbyname("kern.bootargs", args, &size, NULL, 0) == 0;
 	if (have_args) {
 		caenv(args);
+		/* The kernel's opt-in Metal discovery selects the full CA plug-in. */
+		const char *metal = args;
+		while ((metal = strstr(metal, "metal=1")) != NULL) {
+			if ((metal == args || metal[-1] == ' ') && (metal[7] == '\0' || metal[7] == ' ')) {
+				fprintf(stderr, "daisy: metal=1: requesting the HakiosMetal CoreAnimation path\n");
+				return;
+			}
+			metal += 7;
+		}
 		if (strstr(args, " metalsmoke=1") != NULL || strstr(args, " rendersmoke=1") != NULL) {
 			// Run only after dlopen has completed every C++ initializer in the library.
 			void *smoke = dlopen("/daisy/lib/libmetal-smoke.dylib", RTLD_NOW);
