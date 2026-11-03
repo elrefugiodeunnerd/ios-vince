@@ -421,7 +421,10 @@ filesystem check reports `The volume iOSRoot appears to be OK`. Build log:
 - `/hdd/ios-daisy-root/ios16-root-20H392.simg`: SHA-256
   `62f2a578e2e0500946307cb02a7f189d7bf7a4f2887791ceecefc87cad976a27`.
 
-The next test pairs this userdata with the 0208 render-smoke boot image
-above. Flash log: `/hdd/ios-daisy-root/userdata-flash-rendersmoke-rasterstate.log`.
-A completed fence plus **4096 correct pixels** is the required hardware
-result; pixel validation of `f0d25bc` is still pending.
+All 24 sparse userdata chunks flashed successfully (895.538 seconds).
+Flash log: `/hdd/ios-daisy-root/userdata-flash-rendersmoke-rasterstate.log`.
+`fastboot boot artifacts/daisy-gpu-rendersmoke-0208/daisy-boot.img` then
+completed its handoff successfully (0.708 seconds); the boot partition was
+not flashed. The phone must return to TWRP for the next persistent-console
+extraction. A completed fence plus **4096 correct pixels** is the required
+hardware result; pixel validation of `f0d25bc` is still pending.
