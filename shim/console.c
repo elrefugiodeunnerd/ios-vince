@@ -89,6 +89,12 @@ con_switch_scaled(uint32_t w, uint32_t h)
 	uint32_t layer;
 	int i;
 
+	/* evidence first: which pipe does the ABL's splash actually use? The live
+	 * pipe's SRC_SIZE reads the panel's 1080x2280 (0x08e80438); the mixer stage
+	 * register names it. The mia1 ABL used RGB0; daisy's may differ. */
+	con_hex2("MDP RGB0", "src", mdp_rd(RGB0 + SSPP_SRC_SIZE), "layer", mdp_rd(MDP_CTL0_LAYER0));
+	con_hex2("MDP VIG0", "src", mdp_rd(VIG0 + SSPP_SRC_SIZE), "op", mdp_rd(VIG0 + VIG_OP_MODE));
+
 	mdp_wr(VIG0 + SSPP_SRC0_ADDR, (uint32_t)FB_BASE);
 	mdp_wr(VIG0 + SSPP_SRC_YSTRIDE, w * 4);
 	mdp_wr(VIG0 + SSPP_SRC_IMG_SIZE, h << 16 | w);
@@ -117,10 +123,18 @@ con_switch_scaled(uint32_t w, uint32_t h)
 	mdp_wr(VIG0 + VIG_INIT_PHASE_Y, 0);
 	mdp_wr(VIG0 + VIG_SCALE_CONFIG, SCALE_XY_BILINEAR);
 	mdp_wr(VIG0 + SSPP_SRC_OP_MODE, OP_MODE_SW_PIX_EXT);
-	/* the mixer's stage of the RGB pipe (CTL_LAYER: VIG0 [2:0], RGB0 [11:9]) to VIG0 */
+	/* the mixer's stage: the ABL's splash pipe keeps its stage number, VIG0 takes
+	 * it (RGB0 [11:9] -> VIG0 [2:0] as the mia1 ABL had RGB0; daisy's ABL may
+	 * already have VIG0 there, in which case the register is left alone) */
 	layer = mdp_rd(MDP_CTL0_LAYER0);
-	mdp_wr(MDP_CTL0_LAYER0, (layer & ~(7u << 9 | 7u)) | ((layer >> 9) & 7));
+	uint32_t rgb_stage = (layer >> 9) & 7u, vig_stage = layer & 7u;
+	if (rgb_stage != 0) {
+		mdp_wr(MDP_CTL0_LAYER0, (layer & ~(7u << 9 | 7u)) | rgb_stage);
+	} else {
+		mdp_wr(MDP_CTL0_LAYER0, (layer & ~(7u << 9 | 7u)) | vig_stage);
+	}
 	mdp_wr(MDP_CTL0_FLUSH, FLUSH_VIG0 | FLUSH_LM0 | FLUSH_CTL);
+	con_hex2("MDP VIG0", "stage", mdp_rd(MDP_CTL0_LAYER0) & 7u, "flush", 1);
 
 	con_w = w;
 	con_h = h;
