@@ -1,6 +1,6 @@
 # Daisy Adreno 506 bring-up
 
-## Current status — 2026-10-31
+## Current status — 2026-11-03
 
 End-of-day resume notes and persistent `/tmp` copies:
 [`GPU-HANDOFF-2026-10-31.md`](GPU-HANDOFF-2026-10-31.md).
@@ -44,7 +44,7 @@ stalls and GL errors. Shared-surface rendering remains unvalidated. See
 Metal tree adds `render5.cpp` (one linear RGBA8/BGRA8 sysmem target,
 nonindexed triangle lists, pushed constants and sampled textures, flushed
 framebuffer fetch), `texture5.hpp` fd5 descriptors and tables, per-chip AIR
-compilation, and the A5xx dispatch fixes. The host suite is 273/273 green.
+compilation, and the A5xx dispatch fixes. The host suite is 275/275 green.
 The smoke crash loop was a static-initialization order bug, now fixed by
 exporting `daisy_metal_smoke()` and calling it after `dlopen`. The rebuilt
 userdata is ready for the phone; the 0208 image is unchanged. See
@@ -55,8 +55,19 @@ userdata is ready for the phone; the 0208 image is unchanged. See
 end, encoded and submitted 119 words in 5 buffers, completed fence 2, and
 read back all four correct words. backboardd remained alive and rendering.
 This validates transport, GEM, on-device compilation, A5xx dispatch,
-submit/fence and memory order; `render5` itself is the next slice to
-exercise.
+submit/fence and memory order.
+
+**The render smoke now submits and completes, but pixel validation fails
+(2026-11-03).** After device-aware shader compilation and VS driver-parameter
+upload, the A506 completed fence 2 for the 467-word draw. The first checked
+pixel in each of rows 0–3 was zero instead of `20 40 80 ff`; the smoke stops
+after four failing rows. This is not yet a validated draw.
+`hakios-metal` commit `f0d25bc` supplies the lowered zero-based vertex-ID
+register to VFD, normal-draw raster control, screen scissor, explicit
+`ROP_COPY`, and unused FS output registers. All 275 host tests pass, and
+unified userland CI run `41638661933` is green. The next hardware test must
+validate all 4096 pixels. See
+[render smoke evidence](UPSTREAM-PORT.md#render-smoke-submits-but-pixels-fail--2026-11-03).
 
 ## Recovery evidence
 

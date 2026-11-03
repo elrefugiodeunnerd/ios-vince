@@ -323,7 +323,7 @@ backboardd or SpringBoard crashes. The only repeated failure is
 which is separate from the GPU path.
 
 
-### The a5xx render smoke — ready to boot, 2026-11-03
+### The a5xx render smoke — initial image, 2026-11-03
 
 The render half of the smoke, opt-in by rendersmoke=1 (the injector loads
 the same libmetal-smoke.dylib): one tri_flat draw over a 64x64 RGBA8
@@ -343,5 +343,85 @@ compiled by the phone from the embedded tri_flat bitcodes.
 - Console lines: "RENDER SMOKE: starting", "program compiled from the
   embedded AIR bitcodes", "draw encoded, submitting", then per-row
   correctness and "RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read
-  back flat" — or the first failing pixel's coordinates and value, which
-  names the broken stage (raster, ROP, or the flush).
+  back flat" — or the first failing pixel's coordinates and value for
+  diagnosing rasterization, output state, or visibility of writes.
+
+### Render smoke submits but pixels fail — 2026-11-03
+
+Device-aware compilation (`hakios-metal` `a9fbcfc`) removed the wrong-chip
+refusal. Uploading the VS driver parameters then removed the A506 shader
+driver-parameter refusal; the compiled `tri_flat` regression is covered by
+`3c4db75`. Userdata built from CI run `41558244267` reached:
+
+```text
+RENDER SMOKE: program compiled from the embedded AIR bitcodes
+RENDER SMOKE: draw encoded, submitting
+VinceGPU: submit fence=2 bos=5 IBs=1 first=0xc4feb000 words=467
+VinceGPU: completed fence=2
+RENDER SMOKE: pixel (0,0) is 00 00 00 00, want 20 40 80 ff
+RENDER SMOKE: pixel (0,1) is 00 00 00 00, want 20 40 80 ff
+RENDER SMOKE: pixel (0,2) is 00 00 00 00, want 20 40 80 ff
+RENDER SMOKE: pixel (0,3) is 00 00 00 00, want 20 40 80 ff
+RENDER SMOKE: FAIL: 4 rows wrong
+```
+
+Evidence: `artifacts/console-rendersmoke-dp-20261103.log`, 481,433 bytes,
+SHA-256 `86cff2e216a9762ea56fc86758b02b063ba6839908ac520b3498261522cb71c5`.
+The smoke stops after four failing rows, so this does not establish that
+the entire target was zero. The log records GPU startup at 650 MHz and
+continued Mesa rendering, without a recorded kernel panic or backboardd /
+SpringBoard crash. Extension check-in timeouts affect several widgets as
+well as CollectionsPoster, followed by corpse-limit messages.
+
+Before replacing userdata, the same boot's unified logs were extracted via
+`tools/pull_logs_tsk.sh` to `artifacts/logs-rendersmoke-dp-20261103/`.
+`parsed/unified.jsonl` contains 249,721 records for boot UUID
+`0846DBDFE2244BFE8089EA6DFAB9C8B0`. For CollectionsPoster PID 300, launchd
+records `Extension is hanging on launch. Killing.` followed by
+`XPC_EXIT_REASON_EXTENSION_CHECK_IN_TIMEOUT`; the corpse-limit message
+follows that termination. The console records 50 CollectionsPoster timeout
+exits and 34 across other widget/poster extensions. The launch/check-in
+failure still needs its own diagnosis; increasing the corpse limit would
+not explain the original termination.
+
+Comparing the Metal stream with Mesa 25.0.7's `fd5_program.c`, `fd5_emit.c`,
+`fd5_emit.h`, and `fd5_blend.c` produced `hakios-metal` commit `f0d25bc` on
+[`a5xx-port`](https://github.com/proxer05/hakios-metal/tree/a5xx-port):
+
+- Extract `SYSTEM_VALUE_VERTEX_ID_ZERO_BASE` when `VERTEX_ID` is absent.
+  A5xx lowers the shader input to zero-base plus `first_vertex`; VFD must
+  deliver that zero-base input to `r0.x`, rather than the unused `r63.x`.
+- Set bit 3 of `RB_RENDER_CNTL` and `GRAS_SC_CNTL` immediately before a
+  normal draw, following `fd5_emit_render_cntl`.
+- Emit the screen scissor as well as the viewport and window scissors.
+- Match fd5's explicit `ROP_COPY` and unused FS output-register values.
+
+The register mismatches are established; their individual contribution to
+the observed pixels requires hardware testing. In particular, matching
+`ROP_COPY` alone does not prove the old value zeroed writes while
+`ROP_ENABLE` was disabled. Host tests: **275 tests, 0 failed checks**.
+
+Unified userland CI run
+[`41638661933`](https://github.com/proxer05/ios-vince/actions/runs/41638661933)
+passed. Its GPU artifact checksums were verified and staged under
+`/hdd/ios-daisy-root/binaries`; the downloaded artifact is retained in
+`/hdd/ios-daisy-root/ci-41638661933/gpu-stack`.
+
+- `libmetal-smoke.dylib`: SHA-256
+  `a22b6b797faa95f4022bccc32eedfb55d6b45ba072bb02ef59ed77ca277cf313`.
+- `libhakios-metal.a`: SHA-256
+  `b2a69abd012562c45c5bca8ef271e8c0ebbd8e0db96ed623048b4fc0d9e84ae2`.
+
+Userdata was rebuilt with `/hdd/ios-daisy-root/build_root.sh`; the final
+filesystem check reports `The volume iOSRoot appears to be OK`. Build log:
+`/hdd/ios-daisy-root/build_root-rendersmoke-rasterstate.log`.
+
+- `/hdd/ios-daisy-root/ios16-root-20H392.img`: SHA-256
+  `f711cc9df155ad23ece8b6a2df38c6ef0f3b55bf56ac90e39bfb436a0bd200a9`.
+- `/hdd/ios-daisy-root/ios16-root-20H392.simg`: SHA-256
+  `62f2a578e2e0500946307cb02a7f189d7bf7a4f2887791ceecefc87cad976a27`.
+
+The next test pairs this userdata with the 0208 render-smoke boot image
+above. Flash log: `/hdd/ios-daisy-root/userdata-flash-rendersmoke-rasterstate.log`.
+A completed fence plus **4096 correct pixels** is the required hardware
+result; pixel validation of `f0d25bc` is still pending.
