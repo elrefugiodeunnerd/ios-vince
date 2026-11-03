@@ -168,15 +168,20 @@ const char *loader_boot(uintptr_t dtb)
 	ba->Video.v_baseAddr = FB_BASE;
 	ba->Video.v_display = 1;
 	if (fbw != 0) {
-		ba->Video.v_rowBytes = fbw * 3;
+		/* 0211e bisect: the fetch stays 24bpp at stride 2250, but the kernel
+		 * gets the KNOWN-GOOD depth-32 Video of the working 0211 boot. The
+		 * display will be garbage after the kernel starts; the verdict is
+		 * boot vs force-reboot only. */
+		ba->Video.v_rowBytes = fbw * 4;
 		ba->Video.v_width = fbw;
 		ba->Video.v_height = fbh;
+		ba->Video.v_depth = 32;
 	} else {
 		ba->Video.v_rowBytes = FB_STRIDE;
 		ba->Video.v_width = FB_W;
 		ba->Video.v_height = FB_H;
 	}
-	ba->Video.v_depth = 24;
+	if (fbw == 0) ba->Video.v_depth = 24;
 	ba->deviceTreeP = adt_pa - pa_of_va_base;
 	ba->deviceTreeLength = (uint32_t)p->adt_size;
 	for (int i = 0; i < BOOT_LINE_LENGTH; i++)
