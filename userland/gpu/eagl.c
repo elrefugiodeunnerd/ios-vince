@@ -99,6 +99,8 @@ typedef GLDEBUGPROC GLDEBUGPROCKHR;
 #define GL_UNPACK_ROW_LENGTH            0x0cf2
 #define GL_UNPACK_ALIGNMENT             0x0cf5
 #define GL_PACK_ROW_LENGTH              0x0d02
+#define GL_PACK_SKIP_ROWS               0x0d03
+#define GL_PACK_SKIP_PIXELS             0x0d04
 #define GL_PACK_ALIGNMENT               0x0d05
 #define GL_TEXTURE_2D                   0x0de1
 #define GL_UNSIGNED_BYTE                0x1401
@@ -1022,7 +1024,7 @@ frame_end(struct eagl *e, bool finished)
 	before = now_us();
 	for (unsigned i = 0; i < e->image_count; i++) {
 		if (e->images[i].target && e->images[i].drawn && e->images[i].mirror != 0) {
-			target_to_surface(e, &e->images[i]);    /* (the GPU's copy: before what follows sends it out) */
+			target_to_surface(e, &e->images[i], NULL);    /* (the GPU's copy: before what follows sends it out) */
 			in_place++;
 			glFlush();                              /* (also after a glFinish: the copy is new since) */
 		}
