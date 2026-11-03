@@ -528,3 +528,35 @@ artifacts/console-fbscale-0211.log, 105,613 bytes, SHA-256
   zero panics, and the boot reached the launchd daemons.
 - The visual verdict is the user's; the console proves the geometry (every
   frame at 750x1624), the draws, and the refills.
+
+
+### The 720p scaler on the working base — 0211c, ready to boot — 2026-11-03
+
+The first scaled boot (the VIG0 handover on the rewritten console) left the
+panel black: the handover moved the mixer stage blindly the way the mia1
+shim does, and the MDP dump lines it painted went to the shim console,
+which the serial log never captures. The rewrite is abandoned for a
+smaller delta on the KNOWN-GOOD base: the working shim restored from the
+last display-working commit, plus one function.
+
+con_switch_scaled() finds the live splash pipe by its SRC_SIZE (RGB0 or
+VIG0, whichever reads the panel's 1080x2280), reprograms it IN PLACE --
+source 750 x 1624 at the ABL's own 24-bpp fetch format, stride 2250, the
+VIG0 QSEED scaler stretching to the unchanged OUT size -- and leaves the
+mixer stage and the interface untouched. The console and the framebuffer
+geometry switch to 750 x 1624 (stride 2250); both pipes' SRC_SIZE and the
+mixer stage are logged first, so a failure names the state.
+
+- The XNU side is unchanged: the 0211 patch's logical=native branch and
+  the 24-bpp path handle the 750 x 1624 framebuffer natively (the 1:1
+  pack at stride 2250 needs no scaler of its own).
+- Shim: out/shim.elf 22,176 bytes (was 18,784).
+- Image: artifacts/daisy-gpu-fbscale-0211c/daisy-boot.img, 17,981,440
+  bytes, SHA-256 86269fab7626bf177d7ef1e9038fc84d22aed09cac5c0cf36eb00998aee30893
+  (the proven arguments plus fbw=750 fbh=1624). Kernel 0211 unchanged
+  (8df1ed9af7ee5b2ae5b65fb779524644b18c8fb56ae3316bc7ade4e009d91cf3).
+- Userdata unchanged.
+- Console lines: "MDP RGB0: src ... vig ..." and "MDP LAYER0: ..." name the
+  ABL's live pipe; "DISPLAY: VIG0 scaled: iOS draws fbw x fbh, QSEED to the
+  panel" confirms the reprogram; then the usual rendering markers at the
+  750 x 1624 geometry.
