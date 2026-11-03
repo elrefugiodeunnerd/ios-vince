@@ -511,3 +511,20 @@ Console lines: "DISPLAY: VIG0 scaled mode" (the shim), "SWEET FB: scaled
 mode: iOS draws 750x1624, the MDP VIG0 stretches to the panel" (the
 kernel), then the usual rendering markers — with every redwood-gl frame
 summary now at the 750x1624 geometry.
+
+
+### 0211 fbscale hardware result — 2026-11-03
+
+The 0211 image booted with the scaled display working end to end. Console:
+artifacts/console-fbscale-0211.log, 105,613 bytes, SHA-256
+1fd3894844a7ad81aec6feeb4f45617cafc99ff2300a9f684a10e5155fac92b5.
+
+- The shim's VIG0 reprogram and the kernel's scaled mode both applied:
+  "SWEET FB: scaled mode: iOS draws 750x1624, the MDP VIG0 stretches to the
+  panel", AppleCLCD 750x1624 stride 3000 at 0x90001000, panel 32 bpp, and
+  IOMFBDisplayRefresh/presenter as before.
+- The full GPU startup ran unchanged (650 MHz configured, pool v4, memory
+  test), 24 redwood-gl frame summaries with real draws, zero crashes and
+  zero panics, and the boot reached the launchd daemons.
+- The visual verdict is the user's; the console proves the geometry (every
+  frame at 750x1624), the draws, and the refills.
