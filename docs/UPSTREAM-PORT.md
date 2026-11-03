@@ -471,3 +471,43 @@ host suite is green. The image-specific CoreAnimation shader library merges
 the phone's iOS uber shaders with the CI Mac's AIR64 library (161 functions).
 See [the Metal UI test record](METALCA-TEST.md) for pinned sources, hashes,
 packaging checks, root installation, and the hardware evidence still needed.
+
+
+### The 720p fbscale display — 0211, ready to boot — 2026-11-03
+
+The mia1 shim's fbscale trick ported: boot-args fbw=750 fbh=1624 hand iOS a
+750x1624 framebuffer (the iPhone X screen at two pixels a point, 2.25 times
+fewer pixels) and the MDP5's VIG0 pipe — the only one of this MDP with a
+scaler — stretches it to the 1080x2280 panel, bilinear. The processor draws
+less and scales nothing.
+
+Three pieces, each against its witness:
+
+- shim/console.c: con_switch_scaled() reprograms the VIG0 pipe from the
+  splash memory (XRGB8888 at fbw x fbh, QSEED bilinear to the panel, the
+  mixer's stage moved from the ABL's RGB0 to VIG0, everything flushed) and
+  switches the shim console to 32-bpp words at the scaled size. The
+  register sequence is the mia1 shim's, hardware-proven on this MDP (1.16).
+- shim/loader.c: parses fbw/fbh from the payload cmdline, calls the switch,
+  and reports the scaled geometry to XNU in the boot_args Video struct
+  (750 x 1624, 32 bpp, rowBytes 3000).
+- 0211-daisy-fbscale.patch (SweetFramebuffer.cpp): when the boot-args match
+ *the framebuffer's own size, the logical size is the framebuffer's own —
+  iOS draws at 750 x 1624 — and the iPhone X logical size and the
+  scale-to-fit are skipped. The MDP does all the scaling; flushPanel and
+  the 24-bpp pack never run (fPanelBpp is 4 on this path).
+
+- Kernel: artifacts/kernel-0211/kernel.development.vince, CI 41677067423,
+  SHA-256 8df1ed9af7ee5b2ae5b65fb779524644b18c8fb56ae3316bc7ade4e009d91cf3.
+- Image: artifacts/daisy-gpu-fbscale-0211/daisy-boot.img, 17,981,440 bytes,
+  SHA-256 9c84560d27a6261934fdc2166e332169974e954a756370ce82246c10108027b2
+  (the proven arguments plus fbw=750 fbh=1624; the shim differs from the
+  0208's by the scaled console, checked by the packager's DTB/digest
+  asserts instead of a byte comparison).
+- Userdata unchanged — the existing gpu-stack renders at whatever size the
+  framebuffer service reports.
+
+Console lines: "DISPLAY: VIG0 scaled mode" (the shim), "SWEET FB: scaled
+mode: iOS draws 750x1624, the MDP VIG0 stretches to the panel" (the
+kernel), then the usual rendering markers — with every redwood-gl frame
+summary now at the 750x1624 geometry.
