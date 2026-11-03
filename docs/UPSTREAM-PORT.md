@@ -425,6 +425,35 @@ All 24 sparse userdata chunks flashed successfully (895.538 seconds).
 Flash log: `/hdd/ios-daisy-root/userdata-flash-rendersmoke-rasterstate.log`.
 `fastboot boot artifacts/daisy-gpu-rendersmoke-0208/daisy-boot.img` then
 completed its handoff successfully (0.708 seconds); the boot partition was
-not flashed. The phone must return to TWRP for the next persistent-console
-extraction. A completed fence plus **4096 correct pixels** is the required
-hardware result; pixel validation of `f0d25bc` is still pending.
+not flashed. The subsequent TWRP extraction confirms the pixel result below.
+
+### Render smoke pixel validation passes — 2026-11-03
+
+**PASS: all 4096 pixels matched `20 40 80 ff`.** The userdata and boot image
+identified above ran `hakios-metal` `f0d25bc` on the A506. Console evidence:
+`artifacts/console-rendersmoke-rasterstate-20261103.log`, 569,646 bytes,
+SHA-256 `c5cd0484f805854378655ba69c2ba653df686563f52ae19916cf87cdedb9abb3`.
+
+```text
+METAL SMOKE: device open, gpu id 0x5000600
+RENDER SMOKE: starting (tri_flat over a 64x64 RGBA8 target)
+RENDER SMOKE: program compiled from the embedded AIR bitcodes
+RENDER SMOKE: draw encoded, submitting
+VinceGPU: submit fence=2 bos=5 IBs=1 first=0xc4feb000 words=481
+VinceGPU: completed fence=2
+RENDER SMOKE: PASS: 4096 pixels of the a5xx draw read back flat
+```
+
+This validates on-device AIR compilation for both stages, A5xx vertex-ID
+delivery and VS driver parameters, the initial sysmem raster/output state,
+submission, fence completion, and CPU pixel readback for two nonindexed
+triangles covering one linear RGBA8 target. The combined fixes passed;
+their individual effects were not isolated in separate hardware tests.
+
+The same console records all eleven GPU startup stages and the verified
+650 MHz configuration. Mesa UI rendering continues through frame 680 and
+HID reports touch activity with zero read errors. No kernel panic,
+backboardd crash, SpringBoard crash, or GPU timeout is recorded. Extension
+check-in timeouts persist: 120 exits, including 88 for CollectionsPoster,
+with 97 corpse-limit messages. The next Metal validation steps are textured
+and varying draws, followed by the supported CoreAnimation render path.

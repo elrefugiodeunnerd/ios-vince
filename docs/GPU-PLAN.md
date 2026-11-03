@@ -40,14 +40,14 @@ backboardd crash loop. The copy path takes about 160–220 ms per readback;
 stalls and GL errors. Shared-surface rendering remains unvalidated. See
 [0198 rendering result](#0198-rendering-result--2026-10-31).
 
-**The A5xx draw path now has a host-validated slice.** The `a5xx-port`
+**The A5xx draw path now has a hardware-validated flat-draw slice.** The `a5xx-port`
 Metal tree adds `render5.cpp` (one linear RGBA8/BGRA8 sysmem target,
 nonindexed triangle lists, pushed constants and sampled textures, flushed
 framebuffer fetch), `texture5.hpp` fd5 descriptors and tables, per-chip AIR
 compilation, and the A5xx dispatch fixes. The host suite is 275/275 green.
 The smoke crash loop was a static-initialization order bug, now fixed by
 exporting `daisy_metal_smoke()` and calling it after `dlopen`. The rebuilt
-userdata is ready for the phone; the 0208 image is unchanged. See
+userdata has been tested with the 0208 image. See
 [the render5 section](UPSTREAM-PORT.md#the-render5-host-slice-and-the-rebuilt-smoke-userdata--2026-11-02).
 
 **On the phone the smoke passes end to end (2026-11-02).** The device opened
@@ -57,17 +57,17 @@ read back all four correct words. backboardd remained alive and rendering.
 This validates transport, GEM, on-device compilation, A5xx dispatch,
 submit/fence and memory order.
 
-**The render smoke now submits and completes, but pixel validation fails
-(2026-11-03).** After device-aware shader compilation and VS driver-parameter
-upload, the A506 completed fence 2 for the 467-word draw. The first checked
-pixel in each of rows 0–3 was zero instead of `20 40 80 ff`; the smoke stops
-after four failing rows. This is not yet a validated draw.
-`hakios-metal` commit `f0d25bc` supplies the lowered zero-based vertex-ID
-register to VFD, normal-draw raster control, screen scissor, explicit
-`ROP_COPY`, and unused FS output registers. All 275 host tests pass, and
-unified userland CI run `41638661933` is green. The next hardware test must
-validate all 4096 pixels. See
-[render smoke evidence](UPSTREAM-PORT.md#render-smoke-submits-but-pixels-fail--2026-11-03).
+**The render smoke passes all 4096 pixels on hardware (2026-11-03).**
+`hakios-metal` `f0d25bc`, built by unified userland CI run `41638661933`,
+compiled both AIR stages on the A506, submitted the 481-word draw, completed
+fence 2, and read back `20 40 80 ff` at every pixel of the 64x64 target.
+This validates the initial flat-colour, nonindexed sysmem draw end to end.
+The earlier zero-pixel failure was followed by fixes to the lowered
+vertex-ID register, normal-draw raster control, screen scissor, and output
+state; all 275 host tests also pass. The console records continued Mesa UI
+rendering and touch activity, without a kernel panic or backboardd /
+SpringBoard crash. Widget/poster extension check-in timeouts persist. See
+[hardware evidence](UPSTREAM-PORT.md#render-smoke-pixel-validation-passes--2026-11-03).
 
 ## Recovery evidence
 
