@@ -69,6 +69,11 @@ rendering and touch activity, without a kernel panic or backboardd /
 SpringBoard crash. Widget/poster extension check-in timeouts persist. See
 [hardware evidence](UPSTREAM-PORT.md#render-smoke-pixel-validation-passes--2026-11-03).
 
+**The next boot tests the full CoreAnimation Metal plug-in.** Kernel `0210`
+adds opt-in Metal device discovery; unified userland builds the upstream CA
+plug-in over the device-aware A5xx core. See [Metal UI test](METALCA-TEST.md)
+for build inputs, the prepared boot image, and required hardware evidence.
+
 ## Recovery evidence
 
 Temporarily booted TWRP on serial `6790a29e0305` after the user returned to

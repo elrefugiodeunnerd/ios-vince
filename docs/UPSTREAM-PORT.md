@@ -457,3 +457,17 @@ backboardd crash, SpringBoard crash, or GPU timeout is recorded. Extension
 check-in timeouts persist: 120 exits, including 88 for CollectionsPoster,
 with 97 corpse-limit messages. The next Metal validation steps are textured
 and varying draws, followed by the supported CoreAnimation render path.
+
+### Full CoreAnimation Metal plug-in test — 2026-11-03
+
+At the user's request, the next test selects the upstream CoreAnimation
+Metal plug-in for backboardd. Kernel patch `0210` publishes its discovery
+properties behind `metal=1`; the unified userland workflow now builds and
+signs `HakiosMetal.bundle`, with the `a5xx-port` core and device-aware
+render/compute pipeline compilation including function constants.
+
+Kernel CI `41658297622` and userland CI `41659908741` passed. The 276-test
+host suite is green. The image-specific CoreAnimation shader library merges
+the phone's iOS uber shaders with the CI Mac's AIR64 library (161 functions).
+See [the Metal UI test record](METALCA-TEST.md) for pinned sources, hashes,
+packaging checks, root installation, and the hardware evidence still needed.

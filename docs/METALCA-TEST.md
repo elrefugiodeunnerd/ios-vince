@@ -68,3 +68,32 @@ backboardd/SpringBoard exits, and visible screen updates and touch response.
 A plug-in load or completed fence alone does not establish a working Metal
 UI. The upstream plug-in can skip unsupported work while logging it; those
 messages must be counted alongside any visible rendering.
+
+## Prepared image — 2026-11-03
+
+Kernel CI `41658297622` passed. The `0210` boot image passed the packager's
+checks:
+
+- Kernel: `artifacts/kernel-0210/kernel.development.vince`, SHA-256
+  `932fe4a2c8c7608ebec75db9ae28d60025a9214b02d3388f171ba8c297408aff`.
+- Boot image: `artifacts/daisy-gpu-metalca-0210/daisy-boot.img`, 17,981,440
+  bytes, SHA-256
+  `0f042d06f33c7326ceac830ac8585300e1f6d31ee1f7d5e248ddbe377ea34f54`.
+- Build log: `artifacts/build-daisy-metalca-0210.log`.
+- Host suite: `artifacts/metalca-host-tests-20261103.log`, 276 tests,
+  zero failed checks.
+- Previous boot's unified logs were preserved in
+  `artifacts/logs-rendersmoke-rasterstate-20261103/` before rebuilding.
+- The phone's `QuartzCore.framework/default.pipelinelib/functions` contains
+  451 variants: one `fixed_vert_lph_gen`, six `fixed_vert_lph_spc`, 305
+  `fixed_frag_lph_cpf`, and 139 `fixed_frag_lph_cph`. The merge tool's iOS
+  shader replacement and round-trip check passed against these files.
+
+Unified userland CI `41659908741` passed. Its GPU artifact was downloaded to
+`/hdd/ios-daisy-root/ci-41659908741/gpu-stack/` and every `SHA256SUMS` entry
+verified. Merging the CI Mac's AIR64 library with the phone's iOS functions
+produced a round-trip-checked library of 161 functions. The previous staging
+is saved in `/hdd/ios-daisy-root/binaries-before-41659908741/`.
+
+The root rebuild is logged in `/hdd/ios-daisy-root/build_root-metalca-0210.log`.
+Hardware validation of this full plug-in path is pending.
