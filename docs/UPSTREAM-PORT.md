@@ -588,3 +588,32 @@ image artifacts/daisy-gpu-fbscale-0211/daisy-boot.img, SHA-256
 9c84560d27a6261934fdc2166e332169974e954a756370ce82246c10108027b2.
 A byte-identical rebuild is not possible (payload timestamps), so the
 original image is kept as the canonical 720p build.
+
+
+### The smoothness work: damage-box copy-out, ready to test — 2026-11-03
+
+The frame summaries named the bottleneck: 176 ms of a 210 ms frame is
+copying the whole 1125x2436 picture out with glReadPixels at write-combined
+speed, every frame, on one core (cpus=1). The copy exists because the
+driver's import (0197) refuses every surface that is not pool-allocated WC
+memory inside the 32-bit aperture, which takes out both fast paths (drawing
+in place, and the GPU mirror blit) for CA's own IOSurfaces.
+
+Commit 774341b (userland CI 41722517725, green) tracks the union of the
+frame's draw and clear scissors in the display's picture and reads back
+only that box; the rest of the surface already holds what the frame before
+put there. Boot-arg glboxcopy=0 restores the whole-picture copy. The mirror
+path's GPU blit is untouched.
+
+- Userdata: ios16-root-20H392.simg, SHA-256
+  901d8fb5d70e7b6bfb0eb4562ebf17efdd507b5ccac3a5bdbce77a0d7c9a15c1.
+- Boot image: the proven 9c84560d (cpus=1) for the boxcopy verdict.
+- tools/build_daisy_smp.py: the same package with all eight cores
+  (artifacts/daisy-gpu-fbscale-0211-smp/daisy-boot.img, SHA-256
+  eee840fbbccc940927279529a52381de69f02c72c5acab57e4898cf11d7cb769,
+  cpus=8 and no daisylog per build_daisy.sh's SMP note; no emmclog on
+  that boot). The cmdline travels in the boot image, so the userdata
+  is shared.
+- Full-screen redraws (scrolling) stay slow: the damage is the whole
+  screen there. The real fix is importing CA's surfaces into the GPU,
+  which is kernel driver work (cache maintenance, non-WC memory).
