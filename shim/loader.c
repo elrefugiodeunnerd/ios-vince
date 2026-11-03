@@ -126,36 +126,34 @@ const char *loader_boot(uintptr_t dtb)
 	uintptr_t ba_pa = (adt_pa + p->adt_size + PAGE_4K - 1) & ~(PAGE_4K - 1);
 	uintptr_t top = ba_pa + PAGE_4K;
 
-	/* the scaled display (the mia1 shim's fbscale trick): fbw=750 fbh=1624 reprograms
-	 * the VIG0 pipe to fetch the splash memory at that size, XRGB8888, and stretch it
-	 * to the 1080x2280 panel with its QSEED scaler -- iOS then draws 2.25 times fewer
-	 * pixels and the processor does no scaling at all */
-	static uint32_t smoke_w, smoke_h;
-	int scaled = 0;
+	/* the scaled display: fbw=750 fbh=1624 reprograms the ABL's splash pipe in
+	 * place -- the VIG0 pipe fetches the same splash memory at that size and its
+	 * QSEED scaler stretches it to the panel -- and the console/framebuffer
+	 * geometry switch to the fetch size. iOS then draws 2.25 times fewer pixels
+	 * and the processor scales nothing. */
+	uint32_t fbw = 0, fbh = 0;
 	{
-		const char *cmd = p->cmdline;
-		uint32_t fbw = 0, fbh = 0;
-		for (const char *a = cmd; *a; ) {
+		const char *a = p->cmdline;
+		while (*a) {
 			const char *sp = a;
 			while (*sp && *sp != ' ') sp++;
 			unsigned long len = (unsigned long)(sp - a);
 			if (len > 4 && a[0] == 'f' && a[1] == 'b' && a[2] == 'w' && a[3] == '=') {
-				fbw = 0;
 				for (unsigned long k = 4; k < len; k++) fbw = fbw * 10 + (a[k] - '0');
 			} else if (len > 4 && a[0] == 'f' && a[1] == 'b' && a[2] == 'h' && a[3] == '=') {
-				fbh = 0;
 				for (unsigned long k = 4; k < len; k++) fbh = fbh * 10 + (a[k] - '0');
 			}
-			if (!sp) break;
+			if (!*sp) break;
 			a = sp + 1;
 		}
-		if (fbw >= 480 && fbh >= 960 && fbw < FB_W && fbh < FB_H && (fbw & 1) == 0 && (fbh & 1) == 0) {
-			con_switch_scaled(fbw, fbh);
-			con_clear(0x00102040);
-			con_str("DISPLAY", "VIG0 scaled mode: iOS draws fbw x fbh, QSEED to the panel");
-			smoke_w = fbw;
-			smoke_h = fbh;
-			scaled = 1;
+		if (fbw != 0 && fbh != 0) {
+			if (con_switch_scaled(fbw, fbh)) {
+				con_str("DISPLAY", "VIG0 scaled: iOS draws fbw x fbh, QSEED to the panel");
+				con_hex2("DISPLAY", "fbw", fbw, "fbh", fbh);
+			} else {
+				fbw = fbh = 0;
+				con_str("DISPLAY", "the splash pipe cannot serve fbw/fbh; panel size stays");
+			}
 		}
 	}
 
@@ -169,19 +167,16 @@ const char *loader_boot(uintptr_t dtb)
 	ba->topOfKernelData = top;
 	ba->Video.v_baseAddr = FB_BASE;
 	ba->Video.v_display = 1;
-	if (scaled) {
-		/* the VIG0 pipe fetches XRGB8888 at fbw x fbh and scales it to the panel:
-		 * XNU renders straight into the fetch buffer, the MDP does the rest */
-		ba->Video.v_rowBytes = smoke_w * 4;
-		ba->Video.v_width = smoke_w;
-		ba->Video.v_height = smoke_h;
-		ba->Video.v_depth = 32;
+	if (fbw != 0) {
+		ba->Video.v_rowBytes = fbw * 3;
+		ba->Video.v_width = fbw;
+		ba->Video.v_height = fbh;
 	} else {
 		ba->Video.v_rowBytes = FB_STRIDE;
 		ba->Video.v_width = FB_W;
 		ba->Video.v_height = FB_H;
-		ba->Video.v_depth = 24;
 	}
+	ba->Video.v_depth = 24;
 	ba->deviceTreeP = adt_pa - pa_of_va_base;
 	ba->deviceTreeLength = (uint32_t)p->adt_size;
 	for (int i = 0; i < BOOT_LINE_LENGTH; i++)

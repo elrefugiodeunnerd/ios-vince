@@ -22,10 +22,7 @@ void con_hex(const char *label, uint64_t v);
 /* label, then "a=xxxxxxxx b=xxxxxxxx" style pairs of 32-bit values */
 void con_hex2(const char *label, const char *a, uint32_t va, const char *b, uint32_t vb);
 
-/* The scaled display (boot-args fbw/fbh): reprogram the MDP5 VIG0 pipe to
- * fetch the splash memory at w x h XRGB8888 and stretch it to the panel with
- * its QSEED scaler, then switch this console to 32-bpp words at w x h. */
-void con_switch_scaled(uint32_t w, uint32_t h);
-uint32_t con_scaled_w(void);
-uint32_t con_scaled_h(void);
-int con_is_scaled(void);
+/* the scaled display (boot-args fbw/fbh): the MDP5 VIG0 pipe fetches the splash
+ * memory at w x h and stretches it to the panel; the console switches to the
+ * fetch geometry. Returns 0 when the ABL's splash pipe cannot serve it. */
+int con_switch_scaled(uint32_t w, uint32_t h);
