@@ -560,3 +560,31 @@ mixer stage are logged first, so a failure names the state.
   ABL's live pipe; "DISPLAY: VIG0 scaled: iOS draws fbw x fbh, QSEED to the
   panel" confirms the reprogram; then the usual rendering markers at the
   750 x 1624 geometry.
+
+### 0211c force reboot — bisected, 24bpp in-place abandoned — 2026-11-03
+
+0211c force-rebooted before the kernel logged anything: the pulled emmclog is
+byte-identical to 0211b's and console-ramoops holds only the previous Android
+boot, so the crash was shim-level or at the earliest handoff.
+
+The bisect, one boot per image, all on the byte-identical kernel-0211:
+
+- 0211d (probe-only: con_switch_scaled logs SRC_SIZE/LAYER0 and returns 0,
+  known-good 1080x2280 fallback) BOOTED -- the MDP register reads are safe
+  and the fallback path is safe. console-fbscale-0211d.log.
+- 0211e (full 0211c reprogram, kernel given the known-good depth-32 Video)
+  BOOTED -- ambiguous: it may have taken the RGB0-refusal branch, so it does
+  not prove the VIG0 writes by themselves. No console photo was taken.
+
+The 24bpp in-place experiment (0211b/c) is abandoned. Prime suspect for the
+0211c reboot: the shim's Video struct reporting depth 24 / rowBytes 2250,
+which is not even 8-byte aligned (the months-proven 24bpp path uses stride
+3240, 8-aligned; the proven scaled path uses depth 32 / stride 3000).
+
+Per the working-commit plan the shim is restored VERBATIM to f0bf567
+(32bpp XRGB8888 fetch at 750x1624 stride 3000, stage handover, depth-32
+Video) at commit 653c526, and the flash target is the untouched working
+image artifacts/daisy-gpu-fbscale-0211/daisy-boot.img, SHA-256
+9c84560d27a6261934fdc2166e332169974e954a756370ce82246c10108027b2.
+A byte-identical rebuild is not possible (payload timestamps), so the
+original image is kept as the canonical 720p build.
