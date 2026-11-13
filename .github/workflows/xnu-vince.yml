@@ -36,8 +36,8 @@ env:
 
 jobs:
   build:
-    # Previously built and booted with macos-15/Xcode 16.0 (run 41218400794).
-    runs-on: macos-15
+    # Use the supported Intel macOS 15 image; it includes Xcode 16.
+    runs-on: macos-15-intel
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
