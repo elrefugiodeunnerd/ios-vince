@@ -36,9 +36,8 @@ env:
 
 jobs:
   build:
-    # macOS 14 has Xcode 15.x; Xcode 16's iig is incompatible with xnu-8796.
-    # Also avoids the macos-15 queue cancellations seen on this fork.
-    runs-on: macos-14
+    # Previously built and booted with macos-15/Xcode 16.0 (run 41218400794).
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +61,7 @@ jobs:
           sudo chmod +x /usr/local/bin/xcodes
           sw_vers
           ls -d /Applications/Xcode*.app
-          XC=$(find /Applications -maxdepth 1 -type d -name 'Xcode_15*.app' -print | sort -V | tail -n 1)
-          test -n "$XC"
+          XC=/Applications/Xcode_16.app
           test -d "$XC"
           echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
           sudo xcode-select -s "$XC"
